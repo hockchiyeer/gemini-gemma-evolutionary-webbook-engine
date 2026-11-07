@@ -1,0 +1,14 @@
+{
+  "query": "Empty Evidence Topic",
+  "mode": "google_duckduckgo",
+  "source": "google-search-snippets",
+  "provider": "google",
+  "summary": "",
+  "aiOverview": [],
+  "results": [],
+  "extractedAt": 1760000000000,
+  "diagnostics": [
+    "provider:google",
+    "result-count:0"
+  ]
+}

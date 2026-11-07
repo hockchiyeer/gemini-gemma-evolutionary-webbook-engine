@@ -1,0 +1,17 @@
+{
+  "stepDefinitions": [
+    "tests/cypress/e2e/common/*.js"
+  ],
+  "html": {
+    "enabled": true,
+    "output": "test-results/chromeReport/cucumber-report.html"
+  },
+  "messages": {
+    "enabled": true,
+    "output": "test-results/chromeReport/cucumber-messages.ndjson"
+  },
+  "json": {
+    "enabled": true,
+    "output": "test-results/chromeReport/cucumber-report.json"
+  }
+}

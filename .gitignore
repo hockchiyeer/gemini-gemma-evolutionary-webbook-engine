@@ -1,0 +1,36 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Test execution outputs, reports, and generated artifacts
+test-results/
+test-results/chromeReport
+test-result/
+test-result/chromeReport
+tests/cypress/screenshots/
+tests/cypress/videos/
+cypress/screenshots/
+cypress/videos/
+
+# AI Studio internal runtime artifacts and temporary storage
+.aistudio/
+.tempmediaStorage/
+
+# Generated build and packaging archives
+artifacts/
+
+# Public folder and its contents
+public/
+
+# AI Studio runtime prompt uploads and attachments
+public/assets/aistudio/
+
+# Patch files and temporary directories
+*.patch
+tmp/
+

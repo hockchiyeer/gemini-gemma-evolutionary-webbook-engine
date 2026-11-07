@@ -1,0 +1,11 @@
+{
+  "name": "Evolutionary Web-Book Engine",
+  "description": "An AI-powered search engine that uses Evolutionary Computing to compile structured, topic-specific Web-books from raw internet data.",
+  "requestFramePermissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

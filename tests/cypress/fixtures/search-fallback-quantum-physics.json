@@ -1,0 +1,73 @@
+{
+  "query": "Quantum Physics",
+  "source": "google-search-snippets",
+  "provider": "google",
+  "summary": "Quantum physics explains how matter, energy, and information behave at microscopic scales where probability, superposition, and quantization dominate. Modern coverage of the field usually connects foundational concepts such as wave functions and uncertainty with practical applications such as quantum computing, sensing, secure communication, and advanced materials. Across academic, government, and scientific reference sources, the recurring pattern is that quantum theory is mathematically precise, experimentally verified, and still central to active research on measurement, entanglement, and scalable technology.",
+  "aiOverview": [
+    "Quantum physics studies microscopic systems using quantized states, probabilistic measurement, and wave-like behavior.",
+    "Current reporting often links foundational theory to quantum computing, sensing, materials science, and secure communication."
+  ],
+  "results": [
+    {
+      "title": "Quantum mechanics | Definition, Development, and Equations",
+      "url": "https://www.britannica.com/science/quantum-mechanics",
+      "domain": "britannica.com",
+      "snippet": "Quantum mechanics describes physical systems with discrete states, wave functions, and probabilities rather than classical certainty. Reference overviews emphasize superposition, measurement, and the historical shift from classical mechanics to a probabilistic framework that still predicts experiments with high precision.",
+      "excerpt": "Foundational summaries explain that quantum mechanics emerged to model atomic and subatomic behavior, where energy levels are quantized and observation changes what can be known. Core topics include wave particle duality, uncertainty, operators, and how mathematical states are translated into measurable outcomes."
+    },
+    {
+      "title": "Quantum Information Science",
+      "url": "https://www.energy.gov/science/quantum-information-science",
+      "domain": "energy.gov",
+      "snippet": "Department of Energy material presents quantum information science as the bridge between theory and technology, covering computing, networking, and sensing. It highlights how superposition and entanglement create capabilities that are difficult to reproduce with classical devices.",
+      "excerpt": "Government research summaries connect quantum physics to national laboratory work on qubits, error correction, materials, and secure communication. They frame the field as both a scientific discipline and an engineering challenge that depends on precise control of fragile quantum states."
+    },
+    {
+      "title": "Quantum Physics and Quantum Information",
+      "url": "https://ocw.mit.edu/courses/8-04-quantum-physics-i-spring-2016/",
+      "domain": "ocw.mit.edu",
+      "snippet": "University course material introduces the mathematical structure behind wave functions, operators, eigenvalues, and time evolution. It also shows how textbook quantum ideas connect to problem solving, interference, and the measurement postulate.",
+      "excerpt": "Lecture resources explain the Schrödinger equation, state vectors, expectation values, and the logic of experimental interpretation. Educational sources repeatedly stress that the same formalism used to explain atoms also supports later work in quantum information and modern laboratory methods."
+    },
+    {
+      "title": "Quantum entanglement",
+      "url": "https://plato.stanford.edu/entries/qt-entangle/",
+      "domain": "plato.stanford.edu",
+      "snippet": "Philosophical and technical reference material describes entanglement as a nonclassical correlation that prevents composite systems from being reduced to independent parts. It is central to debates about locality, realism, and how quantum states represent shared information.",
+      "excerpt": "Long form analysis explains why entanglement became one of the most distinctive signatures of quantum theory. It links Bell inequalities, measurement, separability, and interpretive questions to practical areas such as teleportation, cryptography, and quantum communication."
+    },
+    {
+      "title": "Quantum computing and quantum simulation",
+      "url": "https://www.nature.com/subjects/quantum-computing",
+      "domain": "nature.com",
+      "snippet": "Research coverage connects quantum physics to computing architectures, simulation, and the difficulty of preserving coherent states in hardware. It emphasizes error rates, scaling, and the experimental reality that useful systems require both theoretical and engineering advances.",
+      "excerpt": "Scientific journalism and review pages tie quantum theory to laboratories building processors, simulators, and precision devices. The recurring theme is that quantum effects are powerful but delicate, which makes coherence, noise suppression, and verification persistent obstacles."
+    },
+    {
+      "title": "Quantum sensing",
+      "url": "https://www.nist.gov/topics/quantum-physics/quantum-sensing",
+      "domain": "nist.gov",
+      "snippet": "Measurement agencies describe quantum sensing as the use of coherence, interference, and entanglement to improve timing, navigation, imaging, and field detection. The field shows how abstract quantum principles can translate into practical precision advantages.",
+      "excerpt": "Standards focused explanations show that sensors built on atomic transitions and quantum control can outperform classical approaches for particular tasks. They also explain why calibration, environmental isolation, and reproducibility are essential when devices rely on microscopic state manipulation."
+    },
+    {
+      "title": "Quantum physics",
+      "url": "https://home.cern/science/physics/quantum-physics",
+      "domain": "home.cern",
+      "snippet": "CERN education material frames quantum physics as the theory of particles, fields, and probabilities underlying high energy experiments. It highlights uncertainty, wave particle duality, and how the theory supports the Standard Model while still raising open questions.",
+      "excerpt": "Large research institutions often present quantum physics as both a conceptual revolution and a practical toolkit for particle experiments. They emphasize how the formalism predicts scattering, decays, and interactions even when intuitive classical pictures fail."
+    },
+    {
+      "title": "Quantum mechanics",
+      "url": "https://physicsworld.com/a/quantum-mechanics/",
+      "domain": "physicsworld.com",
+      "snippet": "Physics reporting surveys the major principles of quantum mechanics and explains why the theory remains indispensable for electronics, chemistry, and information science. Contemporary articles often connect classroom ideas to the broader innovation cycle around quantum technologies.",
+      "excerpt": "Science communication sources describe how superposition, tunneling, and quantization appear in semiconductors, lasers, and modern experiments. They also note that progress in quantum technology depends on translating counterintuitive physics into stable, repeatable systems."
+    }
+  ],
+  "extractedAt": 1760000000000,
+  "diagnostics": [
+    "provider:google",
+    "result-count:8"
+  ]
+}
