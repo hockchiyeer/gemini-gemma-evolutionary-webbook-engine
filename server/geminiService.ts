@@ -18,7 +18,6 @@ import {
   shouldFailOverToLocal,
   type LocalGenerateResult,
 } from "./localLlm.ts";
-import { ensureLocalModelServer } from "./localModelServer.ts";
 
 dotenv.config();
 
@@ -416,9 +415,6 @@ export async function handleGeminiStream(req: IncomingMessage, res: ServerRespon
  */
 export async function handleLocalLlmHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   const cfg = readLocalLlmConfig();
-  if (cfg.baseUrl.includes("11434")) {
-    await ensureLocalModelServer();
-  }
   const status = await getLocalLlmStatus(process.env, { fresh: true });
   sendJson(res, 200, {
     provider: getProviderMode(),
@@ -564,11 +560,9 @@ export function geminiPlugin(): Plugin {
   return {
     name: "gemini-api-middleware",
     configureServer(server) {
-      void ensureLocalModelServer();
       server.middlewares.use(createGeminiMiddleware());
     },
     configurePreviewServer(server) {
-      void ensureLocalModelServer();
       server.middlewares.use(createGeminiMiddleware());
     },
   };

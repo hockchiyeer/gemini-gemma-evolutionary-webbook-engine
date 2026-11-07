@@ -3,10 +3,8 @@ import express from "express";
 import path from "node:path";
 import { createApiCompatibilityMiddleware } from "./googleSearchFallback.ts";
 import { createGeminiMiddleware, setupGeminiLiveWebSocket } from "./geminiService.ts";
-import { ensureLocalModelServer } from "./localModelServer.ts";
 
 async function startServer() {
-  void ensureLocalModelServer();
   const app = express();
   const server = http.createServer(app);
   const PORT = Number(process.env.PORT) || 3000;
