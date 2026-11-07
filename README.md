@@ -1,6 +1,6 @@
-# Evolutionary Web-Book Engine
+# gemini-gemma-evolutionary-webbook-engine
 
-An advanced AI-powered engine that synthesizes comprehensive, authoritative, multi-chapter digital "Web-Books" on any topic by mitigating search redundancy through evolutionary computation.
+AI-powered search & evolutionary computing engine compiling structured, topic-specific Web-books from internet data. Features Google Gemini with automatic failover to offline Google Gemma (Ollama/local), multi-tier search fallback, and high-res vector PDF/DOCX/HTML/JPG export.
 
 ---
 
@@ -51,7 +51,7 @@ Searching a topic returns many pages that repeat each other, and asking an LLM f
 | :--- | :--- |
 | **Frontend Framework** | React 19, TypeScript, Vite 6 |
 | **Styling & UI** | Tailwind CSS v4, Motion (`motion/react`), Lucide React |
-| **AI Integration** | Google Gemini API via `@google/genai` |
+| **AI Integration** | Google Gemini API via `@google/genai` (online) & Google Gemma via Ollama or built-in local provider (offline) |
 | **Document Export** | `jspdf` (installed through `html2pdf.js`), `html2pdf.js`, `html2canvas`, `fflate` (DOCX OpenXML packaging; also used by the packaging script) |
 | **Persistence** | Firebase Firestore, Firebase Auth, Web LocalStorage |
 | **Server & Middleware** | Node.js, Express, `tsx`, Vite plugin middleware, `ws` (Gemini Live WebSocket relay), `dotenv` |
@@ -98,10 +98,13 @@ The same route handlers run in two hosts: Vite plugins during `npm run dev` / `n
 ├── tsconfig.json                        # TypeScript configuration
 ├── vite.config.ts                       # Vite configuration with Tailwind, Gemini and search middleware plugins
 │
+├── exports/                             # Sample generated Web-book export artifacts (PDF, DOCX, HTML, TXT, Print-Friendly)
+│
 ├── scripts/
 │   ├── diagnose-gemini.ts               # `npm run diagnose`: asks Google directly, per model (plain + Search grounding)
 │   ├── make-cjk-font-subset.sh          # Rebuilds the embedded Noto Sans SC subset font
 │   ├── package-google-ai-studio.mjs     # `npm run package:aistudio`: builds the lean source ZIP
+│   ├── setup-local-llm.mjs              # `npm run setup:local-llm` / `postinstall`: automates .env and local Gemma runtime readiness
 │   ├── start-preview.mjs                # Builds, then runs `vite preview` (not wired to an npm script)
 │   └── update_options.cjs               # Legacy one-off codemod that threaded `geminiModel` through services (not used by any script)
 │
@@ -110,6 +113,7 @@ The same route handlers run in two hosts: Vite plugins during `npm run dev` / `n
 │   ├── geminiService.ts                 # /api/gemini/* routes, retry, concurrency gate, timeout, Live WebSocket relay
 │   ├── googleSearchFallback.ts          # Search fallback routes and query handling (Express & Vite middleware)
 │   ├── localLlm.ts                      # Local model provider: Gemini request/response translation, provider routing, readiness probe (Ollama, LM Studio, llama-server)
+│   ├── localModelServer.ts              # In-process & standalone local Gemma server (port 11434 OpenAI-compatible endpoint)
 │   ├── pdfBridge.ts                     # Server PDF stub (Puppeteer disabled; client vector export is used)
 │   ├── server.ts                        # Standalone full-stack server entry (`npm start`)
 │   └── searchStrategies/
@@ -194,7 +198,7 @@ The same route handlers run in two hosts: Vite plugins during `npm run dev` / `n
 npm install
 ```
 
-`.npmrc` already sets `legacy-peer-deps=true`, so peer-dependency conflicts need no extra flag.
+`npm install` automatically executes the `postinstall` setup script (`scripts/setup-local-llm.mjs`), which initializes `.env` from `.env.example`, validates local Gemma model configurations, and ensures offline synthesis readiness. `.npmrc` already sets `legacy-peer-deps=true`, so peer-dependency conflicts need no extra flag.
 
 To inspect and resolve package security vulnerabilities:
 ```bash
