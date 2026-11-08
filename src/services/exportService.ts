@@ -702,7 +702,7 @@ export async function exportWebBookToPdf(webBook: WebBook): Promise<void> {
     console.warn('Server PDF endpoint not available or timed out, proceeding to client-side vector generation...', serverErr);
   }
 
-  // 2. High-resolution vector PDF generation with interactive TOC hyperlinks and editorial layout
+  // 2. High-resolution vector PDF generation with interactive TOC hyperlinks and editorial layout (no silent fallback to print)
   try {
     await exportWebBookWithJsPdf(safeWebBook, chapterImages);
     return;
@@ -715,11 +715,14 @@ export async function exportWebBookToPdf(webBook: WebBook): Promise<void> {
       }
       throw vectorErr;
     }
-    console.warn('jsPDF vector export failed, falling back to print-to-PDF view...', vectorErr);
+    // This used to fall back to the print dialog without a word, so "PDF Document (High Res)" silently turned into
+    // "Print / Save as PDF" whenever anything inside the jsPDF export threw, and nobody could tell why. The two menu
+    // entries are different exports: report the failure (with the real reason, also in the console) and leave the
+    // choice of the print route to the user.
+    console.error('High-Res PDF export (jsPDF) failed:', vectorErr);
+    const reason = String((vectorErr as Error)?.message || vectorErr || 'unknown error').split('\n')[0].slice(0, 200);
+    throw new Error(`The High-Res PDF could not be created (${reason}). Use "Print / Save as PDF" instead, or try again.`);
   }
-
-  // 3. Resilient fallback: browser print-to-PDF dialog
-  await printWebBook(safeWebBook);
 }
 
 let isPrintingInProgress = false;
