@@ -27,6 +27,7 @@ import {
   normalizeCjkSpacing,
   stripSnippetSplices,
 } from "./searchFallbackShared";
+import { BOOK_CHAPTER_COUNT, cleanChapterContent, cleanTermLabel } from './modelTextCleanup';
 import {
   CHAPTER_NUMBER_PREFIX,
   MIN_CHAPTER_TEXT_PAGES,
@@ -1684,16 +1685,16 @@ async function assembleWebBookCore(
       ${evidenceLabel}:
       ${evidenceDigest}
 
-      Create a detailed 10-chapter outline for a comprehensive, full-length Web-book. 
+      Create a detailed outline of exactly ${BOOK_CHAPTER_COUNT} chapters (no more, no fewer; no separate conclusion or epilogue chapter beyond them) for a comprehensive, full-length Web-book. 
       For each chapter, provide:
       1. A compelling title.
       2. A brief 2-sentence focus description.
       3. 4 key terms to define.
       4. 3 sub-topics to explore.
       5. A visual seed keyword for an image.
-      Make the chapters cover different ground so that no chapter repeats another.`,
+      Make the chapters cover different ground so that no chapter repeats another. Write titles without chapter numbers.`,
       config: {
-        systemInstruction: "You are a master book architect. Output valid JSON only. Create a 10-chapter outline that flows logically from introduction to advanced concepts and future outlook. Ensure all terms and sub-topics are meaningful and relevant to the topic. Strictly avoid placeholders, random strings, or meaningless identifiers.",
+        systemInstruction: "You are a master book architect. Output valid JSON only. Create an outline of exactly 10 chapters that flows logically from introduction to advanced concepts and future outlook. Ensure all terms and sub-topics are meaningful and relevant to the topic. Strictly avoid placeholders, random strings, or meaningless identifiers.",
         responseMimeType: "application/json",
         maxOutputTokens: 8192,
         responseSchema: {
@@ -1724,7 +1725,7 @@ async function assembleWebBookCore(
     const outlineData = parseJsonObject(outlineResponse.text);
 
     if (outlineData && Array.isArray(outlineData.outline) && outlineData.outline.length > 0) {
-      const outline: any[] = outlineData.outline.slice(0, 12);
+      const outline: any[] = outlineData.outline.slice(0, BOOK_CHAPTER_COUNT);
       const outlineTitles = outline.map((entry, index) => `${index + 1}. ${entry?.title}`).join('\n');
 
       // Stage 2: chapter expansion, a few requests at a time, each written from the gathered evidence.
@@ -1741,7 +1742,8 @@ async function assembleWebBookCore(
 
           Write a comprehensive, high-quality chapter of ${CHAPTER_TARGET_WORDS.min}-${CHAPTER_TARGET_WORDS.max} words (for Chinese, Japanese or Korean, roughly ${CHAPTER_TARGET_WORDS.min * 2}-${CHAPTER_TARGET_WORDS.max * 2} characters) in 5 to 7 well-developed paragraphs separated by blank lines. Include concrete facts, examples, mechanisms and trade-offs from the evidence.
           Also provide detailed definitions (2-4 sentences each) for: ${(chapterOutline.terms || []).join(', ')}.
-          And detailed analyses (3-5 sentences each) for the sub-topics: ${(chapterOutline.subTopicTitles || []).join(', ')}.`,
+          And detailed analyses (3-5 sentences each) for the sub-topics: ${(chapterOutline.subTopicTitles || []).join(', ')}.
+          Formatting: plain text only. No Markdown at all (no #, ##, ###, ** or bullet symbols) and no heading line that repeats the chapter title or number; always close every parenthesis you open; put each term in the "term" field exactly as given, without a trailing colon.`,
           config: {
             systemInstruction: "You are an expert technical writer. Output valid JSON only. Be detailed, authoritative, and academic in tone. Ensure all definitions and sub-topic analyses are meaningful, human-readable, and relevant to the chapter. Strictly avoid generating random numbers, long strings of digits, or meaningless placeholder text.",
             responseMimeType: "application/json",
@@ -1779,7 +1781,7 @@ async function assembleWebBookCore(
         trackModel(chapterResponse);
 
         const chapterData = parseJsonObject(chapterResponse.text);
-        const chapterContent = String(chapterData?.content || '').trim();
+        const chapterContent = cleanChapterContent(String(chapterData?.content || ''), String(chapterOutline?.title || ''));
         // An empty or tiny chapter used to be replaced by a canned "Comprehensive exploration of ... reveals
         // interconnected principles" sentence. That is filler presented as research, so the chapter fails instead.
         if (countWords(chapterContent) < MIN_ACCEPTABLE_CHAPTER_WORDS) {
@@ -1806,10 +1808,10 @@ async function assembleWebBookCore(
           content: chapterContent,
           definitions: (chapterData?.definitions || [])
             .filter((d: any) => isMeaningful(d.term, d.description))
-            .map((d: any) => ({ ...d, sourceUrl: primaryUrl })),
+            .map((d: any) => ({ ...d, term: cleanTermLabel(d.term), description: cleanChapterContent(String(d.description || '')), sourceUrl: primaryUrl })),
           subTopics: (chapterData?.subTopics || [])
             .filter((s: any) => isMeaningful(s.title, s.summary))
-            .map((s: any) => ({ ...s, sourceUrl: primaryUrl })),
+            .map((s: any) => ({ ...s, title: cleanTermLabel(s.title), summary: cleanChapterContent(String(s.summary || '')), sourceUrl: primaryUrl })),
           sourceUrls: chapterSources.length > 0 ? chapterSources : verifiedSourcesPool.slice(0, 3),
           visualSeed: chapterOutline.visualSeed || `${topic} ${cleanChapterTitle}`,
         } as Chapter;
