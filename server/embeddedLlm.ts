@@ -69,6 +69,8 @@ export interface EmbeddedRequest {
   /** Any valid JSON. */
   jsonObject?: boolean;
   signal?: AbortSignal;
+  /** Called for every generated token, so the caller can tell "slow but working" from "stuck". */
+  onProgress?: () => void;
 }
 
 export interface EmbeddedResult {
@@ -275,6 +277,7 @@ export function createNodeLlamaCppEngine(env: NodeJS.ProcessEnv = process.env): 
         if (request.stop?.length) options.customStopTriggers = request.stop;
         if (grammar) options.grammar = grammar;
         if (request.signal) options.signal = request.signal;
+        if (request.onProgress) options.onToken = () => request.onProgress?.();
 
         let result: { responseText: string; stopReason: string };
         try {

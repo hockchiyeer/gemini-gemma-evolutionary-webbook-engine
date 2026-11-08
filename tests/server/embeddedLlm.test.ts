@@ -23,7 +23,7 @@ console.warn = () => {};
 const realFetch = globalThis.fetch;
 const envKeys = [
   'LLM_PROVIDER', 'LOCAL_LLM_ENGINE', 'LOCAL_LLM_BASE_URL', 'LOCAL_LLM_MODEL', 'LOCAL_LLM_MODEL_PATH', 'LOCAL_LLM_MODEL_URI', 'LOCAL_LLM_MODELS_DIR',
-  'LOCAL_LLM_CONTEXT_SIZE', 'LOCAL_LLM_TIMEOUT_MS', 'LOCAL_LLM_MAX_CONCURRENCY', 'LOCAL_LLM_TEMPERATURE', 'LOCAL_LLM_THREADS', 'GEMINI_API_KEY', 'GEMINI_MAX_ATTEMPTS',
+  'LOCAL_LLM_CONTEXT_SIZE', 'LOCAL_LLM_TIMEOUT_MS', 'LOCAL_LLM_FIRST_TOKEN_TIMEOUT_MS', 'LOCAL_LLM_MAX_CONCURRENCY', 'LOCAL_LLM_TEMPERATURE', 'LOCAL_LLM_THREADS', 'GEMINI_API_KEY', 'GEMINI_MAX_ATTEMPTS',
 ] as const;
 const savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 const DEAD_SERVER = 'http://127.0.0.1:9';
@@ -272,7 +272,7 @@ setEmbeddedEngineForTests(engine);
   assert.equal(tooLong.status, 200, 'the engine recovers after a failure');
 
   // the time limit aborts the engine's work
-  setEnv({ LLM_PROVIDER: 'local', LOCAL_LLM_ENGINE: 'embedded', LOCAL_LLM_TIMEOUT_MS: '120' });
+  setEnv({ LLM_PROVIDER: 'local', LOCAL_LLM_ENGINE: 'embedded', LOCAL_LLM_TIMEOUT_MS: '120', LOCAL_LLM_FIRST_TOKEN_TIMEOUT_MS: '120' });
   engine.delayMs = 700;
   const slow = await post('/api/gemini/generate', { contents: 'x' });
   engine.delayMs = 0;
@@ -280,6 +280,7 @@ setEmbeddedEngineForTests(engine);
   assert.equal(slow.json.error.reason, 'local_timeout');
   assert.match(slow.json.error.message, /LOCAL_LLM_TIMEOUT_MS/);
   assert.equal(engine.requests.at(-1)!.signal?.aborted, true, 'the engine was told to stop');
+  assert.equal(typeof engine.requests.at(-1)!.onProgress, 'function', 'onProgress callback was passed to embedded engine');
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -11,7 +11,9 @@
  *                             gemini = never use a local model;  local = never call Google
  *   LOCAL_LLM_BASE_URL        default http://localhost:11434 (a trailing /v1 is accepted)
  *   LOCAL_LLM_MODEL           default gemma4:e4b
- *   LOCAL_LLM_TIMEOUT_MS      longest wait for ONE answer, default 300000 (0 = no limit)
+ *   LOCAL_LLM_TIMEOUT_MS      longest wait for ONE answer, default 300000 (0 = no limit). Built-in runtime: the longest the model may go
+ *                             WITHOUT producing a new token (it keeps running while it is writing), see LOCAL_LLM_FIRST_TOKEN_TIMEOUT_MS
+ *   LOCAL_LLM_FIRST_TOKEN_TIMEOUT_MS  built-in runtime only: longest wait for the FIRST token (reading a long prompt on a CPU is slow), default 1800000
  *   LOCAL_LLM_MAX_CONCURRENCY simultaneous requests to the local server, default 1 (a laptop GPU answers one at a time)
  *   LOCAL_LLM_TEMPERATURE     default 0.4 (Gemini's default of 1.0 is too hot for a small model writing from evidence)
  *   LOCAL_LLM_ENGINE          auto (default) | http | embedded
@@ -36,6 +38,7 @@ export interface LocalLlmConfig {
   baseUrl: string;
   model: string;
   timeoutMs: number;
+  firstTokenTimeoutMs: number;
   maxConcurrency: number;
   temperature: number;
   engine: LocalEngineMode;
@@ -57,6 +60,7 @@ export function readLocalLlmConfig(env: NodeJS.ProcessEnv = process.env): LocalL
     baseUrl,
     model: String(env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL).trim(),
     timeoutMs: Math.floor(envNumber(env.LOCAL_LLM_TIMEOUT_MS, 300_000)),
+    firstTokenTimeoutMs: Math.floor(envNumber(env.LOCAL_LLM_FIRST_TOKEN_TIMEOUT_MS, 1_800_000)),
     maxConcurrency: Math.max(1, Math.floor(envNumber(env.LOCAL_LLM_MAX_CONCURRENCY, 1, 1))),
     temperature: envNumber(env.LOCAL_LLM_TEMPERATURE, 0.4),
     engine: ['http', 'embedded'].includes(String(env.LOCAL_LLM_ENGINE || '').trim().toLowerCase())
@@ -417,9 +421,18 @@ async function callEmbedded(body: { contents?: any; config?: any }, cfg: LocalLl
   const engine = getEmbeddedEngine(env);
   return gate.run(cfg.maxConcurrency, async () => {
     const controller = new AbortController();
-    const timer = cfg.timeoutMs > 0 ? setTimeout(() => controller.abort(), cfg.timeoutMs) : undefined;
+    // A CPU-only machine can need many minutes for one chapter, so a fixed total limit kills answers that are progressing fine.
+    // Instead: a generous limit for the first token (the model reads the whole prompt first), then a stall limit that restarts
+    // on every generated token. 0 turns the limit off.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = (ms: number) => {
+      if (timer) clearTimeout(timer);
+      timer = ms > 0 ? setTimeout(() => controller.abort(), ms) : undefined;
+    };
+    arm(cfg.timeoutMs > 0 ? Math.max(cfg.timeoutMs, cfg.firstTokenTimeoutMs) : 0);
     try {
       const out = await engine.complete({
+        onProgress: () => arm(cfg.timeoutMs),
         messages: request.messages,
         temperature: request.temperature,
         maxTokens: request.max_tokens,

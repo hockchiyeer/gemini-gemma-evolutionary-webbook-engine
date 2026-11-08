@@ -109,7 +109,7 @@ const setEnv = (values: Partial<Record<(typeof envKeys)[number], string | undefi
 
   // configuration
   assert.deepEqual(readLocalLlmConfig({ LOCAL_LLM_BASE_URL: 'http://127.0.0.1:1234/v1/', LOCAL_LLM_MODEL: 'qwen3:8b', LOCAL_LLM_MAX_CONCURRENCY: '0' } as any), {
-    baseUrl: 'http://127.0.0.1:1234', model: 'qwen3:8b', timeoutMs: 300000, maxConcurrency: 1, temperature: 0.4, engine: 'auto',
+    baseUrl: 'http://127.0.0.1:1234', model: 'qwen3:8b', timeoutMs: 300000, firstTokenTimeoutMs: 1800000, maxConcurrency: 1, temperature: 0.4, engine: 'auto',
   });
   assert.equal(readLocalLlmConfig({ LOCAL_LLM_ENGINE: 'Embedded' } as any).engine, 'embedded');
   assert.equal(readLocalLlmConfig({ LOCAL_LLM_ENGINE: 'http' } as any).engine, 'http');

@@ -244,7 +244,8 @@ GEMINI_API_KEY=your_gemini_api_key_here
 | `LOCAL_LLM_MODELS_DIR` | No | `./models` | Built-in runtime: where the downloaded model is kept |
 | `LOCAL_LLM_CONTEXT_SIZE` | No | 16384 | Built-in runtime: largest context window (prompt + answer, in tokens); more needs more memory. A prompt that does not fit is refused, never cut |
 | `LOCAL_LLM_THREADS` | No | CPU cores | Built-in runtime: CPU threads. The default is the number of cores that exist (llama.cpp's own default can make a 1-2 core VM hundreds of times slower) |
-| `LOCAL_LLM_TIMEOUT_MS` | No | 300000 | Longest wait for one local answer (0 = off) |
+| `LOCAL_LLM_TIMEOUT_MS` | No | 300000 | External server: longest wait for one local answer. Built-in runtime: longest the model may go without producing a new token (it may run longer in total while it keeps writing). 0 = off |
+| `LOCAL_LLM_FIRST_TOKEN_TIMEOUT_MS` | No | 1800000 | Built-in runtime: longest wait for the first token (a CPU reads a long prompt slowly before it writes anything). 0 = off |
 | `LOCAL_LLM_MAX_CONCURRENCY` | No | 1 | Simultaneous requests to the local server |
 | `LOCAL_LLM_TEMPERATURE` | No | 0.4 | Sampling temperature when the engine does not set one |
 | `SKIP_LOCAL_LLM_SETUP`, `LOCAL_LLM_DOWNLOAD`, `LOCAL_LLM_VERIFY` | No | unset | Read by `npm install` only (see Installation): `SKIP_LOCAL_LLM_SETUP=1` skips the local-model setup, `LOCAL_LLM_DOWNLOAD=off` skips the download, `LOCAL_LLM_VERIFY=off` skips the load test |
