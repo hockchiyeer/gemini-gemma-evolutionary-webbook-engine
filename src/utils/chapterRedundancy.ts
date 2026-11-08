@@ -56,23 +56,33 @@ export function removeRepeatedSections(
   const paragraphs = original.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   const flat = (s: string) => s.toLowerCase().replace(WORDS_ONLY, '');
 
+  // 'header' = a bare label or a generic section heading (always safe to drop); 'copy' = a paragraph that restates an entry.
+  const reasons: Array<'keep' | 'header' | 'copy'> = [];
   const keep = paragraphs.map((paragraph, index) => {
-    if (index === 0) return true; // the opening paragraph always stays
+    if (index === 0) { reasons.push('keep'); return true; } // the opening paragraph always stays
     const text = plain(paragraph);
     const flatText = flat(text);
-    if (GENERIC_SECTION_HEADER.test(text)) return false;
+    if (GENERIC_SECTION_HEADER.test(text)) { reasons.push('header'); return false; }
     const paragraphGrams = bigrams(text);
     for (const entry of prepared) {
       // a bare heading that is just the term / sub-topic title
-      if (text.length <= 80 && entry.keys.includes(flatText)) return false;
+      if (text.length <= 80 && entry.keys.includes(flatText)) { reasons.push('header'); return false; }
       const startsWithLabel = entry.keys.some((key) => flatText.startsWith(key));
       const covered = containment(entry.grams, paragraphGrams); // how much of the glossary text sits in this paragraph
       const ratio = Math.min(text.length, entry.length) / Math.max(text.length, entry.length);
-      if (startsWithLabel && covered >= 0.5) return false;
-      if (ratio >= 0.5 && covered >= 0.6 && containment(paragraphGrams, entry.grams) >= 0.5) return false;
+      if (startsWithLabel && covered >= 0.5) { reasons.push('copy'); return false; }
+      if (ratio >= 0.5 && covered >= 0.6 && containment(paragraphGrams, entry.grams) >= 0.5) { reasons.push('copy'); return false; }
     }
+    reasons.push('keep');
     return true;
   });
+
+  // Safety net: a chapter body never drops below two paragraphs. When removing the copies would leave the chapter with a single
+  // paragraph (the body was almost entirely a restatement of its glossary), the first copies are put back until two remain.
+  let keptCount = keep.filter(Boolean).length;
+  for (let i = 0; i < paragraphs.length && keptCount < 2 && paragraphs.length >= 2; i += 1) {
+    if (!keep[i] && reasons[i] === 'copy') { keep[i] = true; keptCount += 1; }
+  }
 
   // a heading left without its paragraph (the paragraph was dropped, the short heading above it was not): drop it too
   const result: string[] = [];

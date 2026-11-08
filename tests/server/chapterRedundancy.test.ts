@@ -46,3 +46,13 @@ assert.ok(!presented.content.includes('指那些利用社交媒体平台'));
 assert.ok(presented.content.includes('独有的分析'));
 assert.equal(presented.definitions.length, 2);
 console.log('chapterRedundancy tests passed');
+
+// a body that would be left with a single paragraph keeps its first copy
+{
+  const d = [{ term: '公民社会组织', description: '公民社会组织是指在国家框架之外，由公民自发组织起来的非营利性团体，致力于推动社会议题和政策改革。' }];
+  const b = '本章探讨公民监督。\n\n公民社会组织是指在国家框架之外，由公民自发组织起来的非营利性团体，致力于推动社会议题和政策改革。';
+  assert.equal(removeRepeatedSections(b, d, []), b);
+  const three = `${b}\n\n本章还有独有的分析内容，与任何定义都不同，讨论监督机制的运作方式。`;
+  assert.ok(!removeRepeatedSections(three, d, []).includes('非营利性团体'));
+}
+console.log('redundancy safety-net test passed');

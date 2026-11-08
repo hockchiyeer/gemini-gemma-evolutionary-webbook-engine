@@ -52,5 +52,32 @@ export function cleanChapterContent(content: string, chapterTitle = ''): string 
     }
     kept.push(stripMarkdownInline(raw).replace(/\s+$/g, ''));
   }
+  // Small models often open the body with the chapter title as a plain line (no "#"), which then prints twice.
+  const firstIndex = kept.findIndex((line) => line.trim() !== '');
+  if (firstIndex >= 0 && isTitleEcho(kept[firstIndex], chapterTitle)) kept.splice(firstIndex, 1);
   return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+const pairsOf = (text: string): Set<string> => {
+  const flat = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const out = new Set<string>();
+  for (let i = 0; i < flat.length - 1; i += 1) out.add(flat.slice(i, i + 2));
+  return out;
+};
+
+/**
+ * True when `line` is just the chapter title again (same words, or a lightly reworded copy such as "马来西亚政治未来路径选择：…" for
+ * "未来政治的路径选择：…"): short, not a full sentence, and sharing most of the title's character pairs.
+ */
+export function isTitleEcho(line: string, chapterTitle: string): boolean {
+  const title = stripMarkdownInline(chapterTitle).replace(/^[第\d一二三四五六七八九十百]+[章节.、:：\s]*/, '').trim();
+  const text = stripMarkdownInline(line).trim();
+  if (!title || !text) return false;
+  if (/[。！？!?]$/.test(text) || text.length > title.length * 1.6 + 8) return false;
+  const a = pairsOf(title);
+  const b = pairsOf(text);
+  if (a.size === 0 || b.size === 0) return false;
+  let hit = 0;
+  for (const g of a) if (b.has(g)) hit += 1;
+  return hit / a.size >= 0.7;
 }

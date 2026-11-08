@@ -28,6 +28,7 @@ import {
   stripSnippetSplices,
 } from "./searchFallbackShared";
 import { BOOK_CHAPTER_COUNT, cleanChapterContent, cleanTermLabel } from './modelTextCleanup';
+import { isBibliographicCitation, isSiteChromePage, selectRelevantPages } from '../utils/evidenceQuality';
 import {
   CHAPTER_NUMBER_PREFIX,
   MIN_CHAPTER_TEXT_PAGES,
@@ -1285,12 +1286,14 @@ export function synthesizeFallbackWebBook(
   // Evolution keeps only half of the gathered pages per generation, which leaves too little distinct evidence for six
   // chapters. The pages it pruned are therefore used after the survivors; offspring add nothing of their own and are skipped.
   const seenPages = new Set<string>();
-  const pool: WebPageGenotype[] = [...sources, ...(searchResult?.results || [])].filter((page: WebPageGenotype) => {
+  const distinctPages: WebPageGenotype[] = [...sources, ...(searchResult?.results || [])].filter((page: WebPageGenotype) => {
     const key = page?.id || page?.url;
     if (!key || key.startsWith(OFFSPRING_ID_PREFIX) || seenPages.has(key)) return false;
     seenPages.add(key);
     return true;
   });
+  // Site furniture ("About us", activity listings) and pages that barely touch the topic must not become chapters.
+  const pool: WebPageGenotype[] = selectRelevantPages(topic, distinctPages);
 
   const validSources = pool
     .filter(s => s.url && /^https?:\/\//i.test(s.url) && !s.url.includes('source-') && !s.url.includes('knowledge-base.org'))
@@ -1308,7 +1311,7 @@ export function synthesizeFallbackWebBook(
   const gatheredEvidence: FallbackEvidenceUnit[] = [];
   rankedPool.forEach(({ page, tier }) => {
     splitIntoSentences(normalizeCjkSpacing(stripSnippetSplices(sanitizeNarrativeText(page.content)))).forEach(text => {
-      if (isPageChromeText(text)) return;
+      if (isPageChromeText(text) || isBibliographicCitation(text)) return;
       if (!gatheredEvidence.some(kept => calculateTextSimilarity(kept.text, text) >= 0.88)) {
         gatheredEvidence.push({ text, url: page.url, tier });
       }
@@ -1637,6 +1640,8 @@ async function assembleWebBookCore(
     try {
       const u = new URL(cleanUrl);
       if (u.hostname.includes('source-') || u.hostname === 'knowledge-base.org') return;
+      // "About us", "Contact", activity listings: site furniture is not a reference for a chapter.
+      if (isSiteChromePage(cleanUrl, String(title || ''))) return;
       poolSeen.add(cleanUrl);
       verifiedSourcesPool.push({
         title: String(title || u.hostname).trim(),

@@ -13,6 +13,7 @@ import {
   getWebBookElement,
   prepareExportContent,
 } from './exportDocument';
+import { CjkFontUnavailableError, loadCjkFontBase64, registerCjkFont } from './pdfCjkFont';
 
 function formatSourceLink(source: string | { title: string; url: string }): string {
   return typeof source === 'string' ? source : `${source.title} - ${source.url}`;
@@ -129,14 +130,12 @@ export async function exportWebBookWithJsPdf(
   // loaded, loadCjkFontBase64 throws CjkFontUnavailableError and the caller surfaces it instead of swapping layouts.
   let cjkFontBase64: string | null = null;
   if (webBookHasCjk(safeWebBook)) {
-    const { loadCjkFontBase64 } = await import('./pdfCjkFont');
     cjkFontBase64 = await loadCjkFontBase64();
   }
 
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
   if (cjkFontBase64) {
-    const { registerCjkFont } = await import('./pdfCjkFont');
     registerCjkFont(doc, cjkFontBase64);
   }
 
@@ -708,7 +707,7 @@ export async function exportWebBookToPdf(webBook: WebBook): Promise<void> {
     return;
   } catch (vectorErr) {
     // A missing CJK font must not silently switch to another layout; report it to the user instead.
-    if ((vectorErr as Error)?.name === 'CjkFontUnavailableError') {
+    if (vectorErr instanceof CjkFontUnavailableError || (vectorErr as Error)?.name === 'CjkFontUnavailableError') {
       const attempts = (vectorErr as any)?.attempts;
       if (Array.isArray(attempts) && attempts.length > 0) {
         console.warn('CJK font loading failed across candidate locations:', attempts.join('; '));

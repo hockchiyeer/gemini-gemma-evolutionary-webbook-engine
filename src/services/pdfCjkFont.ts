@@ -13,26 +13,48 @@ export const CJK_FONT_FAMILY = 'NotoSansSC';
 const CJK_FONT_FILE = 'NotoSansSC-Subset.ttf';
 
 export class CjkFontUnavailableError extends Error {
-  constructor(public readonly attempts: string[]) {
+  readonly attempts: string[];
+
+  constructor(attempts: string[]) {
     super(
       'The CJK font could not be loaded, so the High-Res PDF was not created. Try again, or use Print / Save as PDF.'
     );
     this.name = 'CjkFontUnavailableError';
+    this.attempts = attempts;
   }
 }
 
-/** Candidate locations, most reliable first. The bundled asset URL is rewritten by Vite in dev and in builds. */
+/**
+ * URLs of the font file known to the bundler. A glob is used on purpose: a plain "new URL(<literal path>, import.meta.url)" makes Vite
+ * resolve the file while it TRANSFORMS this module. exportService now imports this module statically, so if the 17 MB font were not
+ * part of a deployment (Google AI Studio can drop large binaries) that transform error would break the whole app at start-up instead
+ * of only the export. A glob that matches nothing is simply empty, so a missing font ends in the clear CjkFontUnavailableError.
+ * Outside Vite (Node tests) the glob call does not exist and is guarded.
+ */
+function bundledFontUrls(): string[] {
+  try {
+    const found = import.meta.glob('../assets/fonts/NotoSansSC-Subset.ttf', { query: '?url', import: 'default', eager: true }) as Record<string, unknown>;
+    return Object.values(found).filter((url): url is string => typeof url === 'string' && url.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Candidate locations, most reliable first. Duplicates are removed. */
 export function getCjkFontUrls(): string[] {
   const urls: string[] = [];
   try {
-    urls.push(new URL('../assets/fonts/NotoSansSC-Subset.ttf', import.meta.url).href);
+    // Built from a variable so that Vite does not try to resolve the file at transform time (see bundledFontUrls).
+    const relative = `../assets/fonts/${CJK_FONT_FILE}`;
+    urls.push(new URL(relative, import.meta.url).href);
   } catch {
     /* import.meta.url unavailable */
   }
+  urls.push(...bundledFontUrls());
   // Legacy location, kept so an existing public/fonts copy keeps working.
   const base = (import.meta as any)?.env?.BASE_URL ?? '/';
   urls.push(`${base}fonts/${CJK_FONT_FILE}`);
-  return urls;
+  return [...new Set(urls)];
 }
 
 const CJK_CHARS = '\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7af\uf900-\ufaff\uff00-\uffef';
