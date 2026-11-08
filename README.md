@@ -51,7 +51,7 @@ Searching a topic returns many pages that repeat each other, and asking an LLM f
 | :--- | :--- |
 | **Frontend Framework** | React 19, TypeScript, Vite 6 |
 | **Styling & UI** | Tailwind CSS v4, Motion (`motion/react`), Lucide React |
-| **AI Integration** | Google Gemini API via `@google/genai` (online) & Google Gemma via Ollama / LM Studio (local offline) |
+| **AI Integration** | Google Gemini API via `@google/genai` (online); a local model with no Google key: Gemma through the built-in llama.cpp runtime (`node-llama-cpp`, set up by `npm install`) or through Ollama / LM Studio |
 | **Document Export** | `jspdf` (installed through `html2pdf.js`), `html2pdf.js`, `html2canvas`, `fflate` (DOCX OpenXML packaging; also used by the packaging script) |
 | **Persistence** | Firebase Firestore, Firebase Auth, Web LocalStorage |
 | **Server & Middleware** | Node.js, Express, `tsx`, Vite plugin middleware, `ws` (Gemini Live WebSocket relay), `dotenv` |
@@ -103,7 +103,9 @@ The same route handlers run in two hosts: Vite plugins during `npm run dev` / `n
 ├── scripts/
 │   ├── diagnose-gemini.ts               # `npm run diagnose`: asks Google directly, per model (plain + Search grounding)
 │   ├── make-cjk-font-subset.sh          # Rebuilds the embedded Noto Sans SC subset font
+│   ├── make-tiny-gguf.py                # Rebuilds tests/fixtures/tiny-random.gguf (160 KB random-weight model for the real-runtime tests; needs `pip install gguf numpy`)
 │   ├── package-google-ai-studio.mjs     # `npm run package:aistudio`: builds the lean source ZIP
+│   ├── setup-local-llm.mjs              # `npm install` (postinstall) / `npm run setup:local-llm` / `npm run local-llm:check`: checks the built-in runtime, downloads the model once, proves it works
 │   ├── start-preview.mjs                # Builds, then runs `vite preview` (not wired to an npm script)
 │   └── update_options.cjs               # Legacy one-off codemod that threaded `geminiModel` through services (not used by any script)
 │
@@ -111,6 +113,8 @@ The same route handlers run in two hosts: Vite plugins during `npm run dev` / `n
 │   ├── geminiErrors.ts                  # Classifies Google/Gemini errors into reasons, retry hints and user messages
 │   ├── geminiService.ts                 # /api/gemini/* routes, retry, concurrency gate, timeout, Live WebSocket relay
 │   ├── googleSearchFallback.ts          # Search fallback routes and query handling (Express & Vite middleware)
+│   ├── embeddedLlm.ts                   # Built-in local model engine: llama.cpp in this process via node-llama-cpp (model lookup, JSON-schema grammar, limits, abort)
+│   ├── localModelDefaults.mjs           # Default model URI / size / context shared by the server and the setup script
 │   ├── localLlm.ts                      # Local model provider: Gemini request/response translation, provider routing, readiness probe (Ollama, LM Studio, llama-server)
 │   ├── pdfBridge.ts                     # Server PDF stub (Puppeteer disabled; client vector export is used)
 │   ├── server.ts                        # Standalone full-stack server entry (`npm start`)
@@ -178,7 +182,7 @@ The same route handlers run in two hosts: Vite plugins during `npm run dev` / `n
     │   ├── run-cypress-with-reports.cjs # Runs Cypress, then the report generator
     │   ├── run-local-cypress.cjs        # Starts the dev server if needed, runs Cypress, stops the server
     │   └── smoke/                       # Manual scripts (import, PDF bridge, Google fetch); not run by npm scripts
-    └── server/                          # 21 `tsx` unit/regression tests, run by `npm run test:server`
+    └── server/                          # 25 `tsx` unit/regression tests, run by `npm run test:server`
 ```
 
 ---
@@ -197,6 +201,14 @@ npm install
 ```
 
 `.npmrc` already sets `legacy-peer-deps=true`, so peer-dependency conflicts need no extra flag.
+
+**What `npm install` also does for local models** (so books can be written with no Gemini key and no Ollama):
+
+1. installs `node-llama-cpp`, the llama.cpp runtime for Node (an *optional* dependency with prebuilt binaries for Windows, macOS incl. Apple Silicon, and Linux; the GPU variants make this a few hundred MB on disk);
+2. runs `scripts/setup-local-llm.mjs`, which checks that the runtime loads, **downloads the Gemma model once (about 2.8 GB; resumable)** into `./models/`, and proves it works by loading it and writing a few tokens;
+3. reports honestly what it verified. It never edits `.env`, never starts a compiler or a background process, and never fails the install: if something is missing it prints the one command that fixes it.
+
+It is skipped automatically in CI, production (`NODE_ENV=production`) and global installs. To control it, set these in your shell (`SKIP_LOCAL_LLM_SETUP=1 npm install`): `SKIP_LOCAL_LLM_SETUP=1` skips everything, `LOCAL_LLM_DOWNLOAD=off` checks the runtime but downloads nothing, `LOCAL_LLM_VERIFY=off` skips the load test, and `LOCAL_LLM_ENGINE=http` (you use Ollama / LM Studio) skips it too. Run it later with `npm run setup:local-llm`, and re-check any time with `npm run local-llm:check`. For a hosted deployment or a build server, install with `SKIP_LOCAL_LLM_SETUP=1`.
 
 To inspect and resolve package security vulnerabilities:
 ```bash
@@ -224,11 +236,18 @@ GEMINI_API_KEY=your_gemini_api_key_here
 | `GEMINI_MAX_RETRY_WAIT_MS` | No | 45000 | Longest single retry wait before giving up |
 | `GEMINI_REQUEST_TIMEOUT_MS` | No | 50000 | Longest wait for one Google answer (0 = off); a timeout triggers failover to a sibling model |
 | `LLM_PROVIDER` | No | `auto` | `auto`: Gemini when its key works, otherwise a ready local model; `gemini`: never use a local model; `local`: never call Google |
-| `LOCAL_LLM_BASE_URL` | No | `http://localhost:11434` | Any OpenAI-compatible server: Ollama, LM Studio, llama.cpp `llama-server`, vLLM (a trailing `/v1` is accepted) |
+| `LOCAL_LLM_ENGINE` | No | `auto` | `auto`: an external server (Ollama, LM Studio, ...) when one is ready, otherwise the built-in runtime when its model is downloaded; `http`: external server only; `embedded`: built-in only |
+| `LOCAL_LLM_BASE_URL` | No | `http://localhost:11434` | External server: any OpenAI-compatible one: Ollama, LM Studio, llama.cpp `llama-server`, vLLM (a trailing `/v1` is accepted) |
 | `LOCAL_LLM_MODEL` | No | `gemma4:e4b` | Model the local server should use (a single-model server answers with whatever it has loaded) |
+| `LOCAL_LLM_MODEL_URI` | No | `hf:ggml-org/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_0.gguf` | Built-in runtime: the model to download (about 2.8 GB). A bigger one: `hf:ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M` (about 5.3 GB, 8 GB+ RAM, better quality) |
+| `LOCAL_LLM_MODEL_PATH` | No | none | Built-in runtime: use this `.gguf` file you already have (wins over the URI; nothing is downloaded) |
+| `LOCAL_LLM_MODELS_DIR` | No | `./models` | Built-in runtime: where the downloaded model is kept |
+| `LOCAL_LLM_CONTEXT_SIZE` | No | 16384 | Built-in runtime: largest context window (prompt + answer, in tokens); more needs more memory. A prompt that does not fit is refused, never cut |
+| `LOCAL_LLM_THREADS` | No | CPU cores | Built-in runtime: CPU threads. The default is the number of cores that exist (llama.cpp's own default can make a 1-2 core VM hundreds of times slower) |
 | `LOCAL_LLM_TIMEOUT_MS` | No | 300000 | Longest wait for one local answer (0 = off) |
 | `LOCAL_LLM_MAX_CONCURRENCY` | No | 1 | Simultaneous requests to the local server |
 | `LOCAL_LLM_TEMPERATURE` | No | 0.4 | Sampling temperature when the engine does not set one |
+| `SKIP_LOCAL_LLM_SETUP`, `LOCAL_LLM_DOWNLOAD`, `LOCAL_LLM_VERIFY` | No | unset | Read by `npm install` only (see Installation): `SKIP_LOCAL_LLM_SETUP=1` skips the local-model setup, `LOCAL_LLM_DOWNLOAD=off` skips the download, `LOCAL_LLM_VERIFY=off` skips the load test |
 | `PORT` | No | 3000 | Port for `npm start` |
 
 ### 4. Development Server
@@ -296,7 +315,7 @@ The table below clarifies whether each `npm` / `npm run` command manages the loc
 | `npm run test:e2e`<br>*(or `npm run cy:run:local`)* | **Requires Running Server**<br>*(Run `npm run dev` first)* | Runs the full BDD test suite headlessly and compiles the HTML report against an already running local server. |
 | `npm run cy:run` | **Requires Running Server**<br>*(Run `npm run dev` first)* | Runs Cypress headlessly against an already running server without re-generating HTML report. |
 | `npm run cy:open` | **Requires Running Server**<br>*(Run `npm run dev` first)* | Opens the interactive Cypress GUI for visual step-by-step browser testing. |
-| `npm run test:server` | **Not Required** *(Standalone)* | Runs the 21 `tsx` unit/regression tests in `tests/server/`: Gemini error classification and retry, search fallback routing and client, fallback notices, evolution and chapter assembly, knowledge references, snippet-only pagination, offline book depth (page excerpts, chrome filtering), offline source reliability (reliability tiers, best-first fetching, same-site link following, evidence consolidation), offline text quality (snippet splices, Chinese spacing and glossary terms, headings, localized abstract), local model provider (request translation, provider routing, failover, end-to-end book through a fake local server), content filters, document titles and boundary summarization, hyperlinked/CJK/print-friendly exports, CJK font, and export label localisation. |
+| `npm run test:server` | **Not Required** *(Standalone)* | Runs the 25 `tsx` unit/regression tests in `tests/server/`: Gemini error classification and retry, search fallback routing and client, fallback notices, evolution and chapter assembly, knowledge references, snippet-only pagination, offline book depth (page excerpts, chrome filtering), offline source reliability (reliability tiers, best-first fetching, same-site link following, evidence consolidation), offline text quality (snippet splices, Chinese spacing and glossary terms, headings, localized abstract), local model provider (request translation, provider routing, failover, end-to-end book through a fake local server), built-in model engine (real llama.cpp runtime on a tiny test model, routing, limits, health, end-to-end book), the install-time setup script (skips, failures, no `.env` writes), and `.env.example` / README consistency, content filters, document titles and boundary summarization, hyperlinked/CJK/print-friendly exports, CJK font, and export label localisation. |
 | `npm run report:generate` | **Not Required** *(Standalone)* | Compiles the visual HTML report from existing Cucumber JSON test result artifacts. |
 
 ### 6a. Troubleshooting Gemini connectivity
@@ -313,30 +332,40 @@ curl http://localhost:3000/api/gemini/health   # same check through the running 
 - A chapter that Gemini cannot write is left out and named in the notice; it is never replaced by filler text.
 - If live search is unavailable the engine can write from the model's own knowledge. Such a book is labelled **Model knowledge (not verified against live sources)** and attaches related references (live subject searches or Wikipedia/Google Scholar links) to each chapter without claiming them as cited sources.
 
-### 6b. Writing books with a local model (Gemma via Ollama, no Gemini key)
+### 6b. Writing books with a local model (no Gemini key)
 
-Without a Gemini key the engine already gathers real evidence from the web (6a) and assembles an extractive book. A model running on your own machine can instead **write** the outline and chapters from that evidence, with nothing sent to Google.
+Without a Gemini key the engine already gathers real evidence from the web (6a) and assembles an extractive book. A model running on your own machine can instead **write** the outline and chapters from that evidence, with nothing sent to Google. There are two ways to have one, and the app uses whichever is ready:
+
+| | Built-in (the default) | External server |
+| :--- | :--- | :--- |
+| What it is | llama.cpp running inside this app through `node-llama-cpp`, with a Gemma model file in `./models/` | Ollama, LM Studio, llama.cpp `llama-server`, vLLM |
+| Set up by | `npm install` (see Installation), or later `npm run setup:local-llm` | you: e.g. install Ollama, then `ollama pull gemma4:e4b` |
+| Extra programs to run | none | the server |
+| Disk / memory | about 2.8 GB download, 4 GB+ RAM for the default Gemma 4 E2B | whatever model you choose |
+| GPU | used automatically when the prebuilt binary fits (Apple Silicon Metal, NVIDIA CUDA, Vulkan); otherwise CPU | the server decides |
 
 ```bash
-# 1. install Ollama (https://ollama.com), then pull a small Gemma model once
-ollama pull gemma4:e4b            # smaller: gemma4:e2b   larger: gemma4:12b, gemma4:26b
-# 2. start the app with no GEMINI_API_KEY (or LLM_PROVIDER=local); that's it
-npm run dev
-curl http://localhost:3000/api/local-llm/health   # reachable / ready / installed models / what to run if not
+npm run local-llm:check                           # loads the model and writes a few tokens: proves it works on this machine
+npm run dev                                       # with no GEMINI_API_KEY (or LLM_PROVIDER=local); generate a book
+curl http://localhost:3000/api/local-llm/health   # which engine will answer, what is installed, and the next step if nothing is ready
 ```
 
-| Situation (`LLM_PROVIDER=auto`) | What answers |
+| Situation (`LLM_PROVIDER=auto`, `LOCAL_LLM_ENGINE=auto`) | What answers |
 | :--- | :--- |
-| No Gemini key, local model ready | The local model writes the outline and chapters |
-| Gemini key rejected, out of quota or Google down, local model ready | Google is tried first; the local model takes over for that request |
+| No Gemini key, an external server is running with the model | The external server (it is the one you chose to run) |
+| No Gemini key, no external server, built-in model downloaded | The built-in model writes the outline and chapters |
+| Gemini key rejected, out of quota or Google down, a local engine ready | Google is tried first; the local engine takes over for that request |
 | Google Search grounding | Always Google (a local model cannot search). Without a key the engine uses its own web search, as in 6a |
-| No key and no ready local model | The extractive offline book (unchanged) |
+| No key and nothing local ready (model not downloaded, no server) | The extractive offline book, written from all the gathered evidence |
 
-- The book's notice names what wrote it, for example "10 chapter requests were answered by gemma4:e4b (local) instead of the selected gemini-3.6-flash".
-- Any server with an OpenAI-compatible `/v1/chat/completions` works: set `LOCAL_LLM_BASE_URL` (LM Studio, `llama-server`, vLLM). Structured output uses `response_format: json_schema`.
-- A local model answers one request at a time by default (`LOCAL_LLM_MAX_CONCURRENCY=1`); a 10-chapter book takes minutes on a laptop GPU. Prompts carry up to about 12,000 characters of evidence, so if the model seems to ignore it, raise the server's context length (for Ollama, the `OLLAMA_CONTEXT_LENGTH` setting).
-- Small models can state things the evidence does not say. Treat a locally written book as a draft to check against its sources.
-- Local failures are final and quiet: the engine falls back to the extractive book instead of retrying for minutes.
+- **Honest labelling.** The book's notice names what wrote it, for example "10 chapter requests were answered by gemma-4-E2B-it-Q4_0 (local) instead of the selected gemini-3.6-flash". Nothing is ever presented as Gemma that is not.
+- **Switching.** `LOCAL_LLM_ENGINE=http` uses only an external server, `embedded` only the built-in one. `LLM_PROVIDER=gemini` never uses a local model; `local` never calls Google.
+- **Bigger or your own model.** `LOCAL_LLM_MODEL_URI=hf:ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M` (about 5.3 GB, 8 GB+ RAM) writes better; `LOCAL_LLM_MODEL_PATH` uses any `.gguf` you already have. Then `npm run setup:local-llm`.
+- **Speed.** A local model answers one request at a time by default (`LOCAL_LLM_MAX_CONCURRENCY=1`); a 10-chapter book takes minutes on a laptop, longer on CPU only.
+- **Quality.** The default is a small model. It can state things the evidence does not say, so treat a locally written book as a draft to check against its sources. Prompts carry up to about 12,000 characters of evidence; one that does not fit the context window is refused with a message naming `LOCAL_LLM_CONTEXT_SIZE`, never silently cut. For an external Ollama, raise the server's own context length instead (the `OLLAMA_CONTEXT_LENGTH` setting).
+- **Failures are final and quiet.** If the model is missing, the runtime cannot run on your machine, or an answer takes longer than `LOCAL_LLM_TIMEOUT_MS`, the engine falls back to the extractive book instead of retrying for minutes. The message says exactly what to run.
+- **No internet during install.** The runtime still installs; only the model file is missing. `npm run setup:local-llm` later (it resumes), or set `LOCAL_LLM_MODEL_PATH` to a `.gguf` you copied over.
+- **Hosted deployments.** Install with `SKIP_LOCAL_LLM_SETUP=1`: a server does not need a 2.8 GB model and the setup skips itself in production anyway.
 
 ### 7. Code Verification
 

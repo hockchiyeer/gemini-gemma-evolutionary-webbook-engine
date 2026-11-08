@@ -14,12 +14,20 @@
  *   LOCAL_LLM_TIMEOUT_MS      longest wait for ONE answer, default 300000 (0 = no limit)
  *   LOCAL_LLM_MAX_CONCURRENCY simultaneous requests to the local server, default 1 (a laptop GPU answers one at a time)
  *   LOCAL_LLM_TEMPERATURE     default 0.4 (Gemini's default of 1.0 is too hot for a small model writing from evidence)
+ *   LOCAL_LLM_ENGINE          auto (default) | http | embedded
+ *                             http     = only an external server (Ollama, LM Studio, llama-server)
+ *                             embedded = only the built-in runtime (node-llama-cpp inside this process; weights from `npm run setup:local-llm`)
+ *                             auto     = an external server when one is ready, otherwise the built-in runtime when its model is downloaded
+ *   LOCAL_LLM_MODEL_URI / LOCAL_LLM_MODEL_PATH / LOCAL_LLM_MODELS_DIR / LOCAL_LLM_CONTEXT_SIZE   built-in runtime (see server/embeddedLlm.ts)
  *
  * Things only Gemini can do are never faked: Google Search grounding, image / audio parts, and tool calls are refused so the
  * client takes the same path it takes without a key (its own web search + the evidence it gathered).
  */
 
+import { EmbeddedEngineError, getEmbeddedEngine, type EmbeddedStatus } from './embeddedLlm.ts';
+
 export type LlmProviderMode = 'auto' | 'gemini' | 'local';
+export type LocalEngineMode = 'auto' | 'http' | 'embedded';
 
 export const DEFAULT_LOCAL_BASE_URL = 'http://localhost:11434';
 export const DEFAULT_LOCAL_MODEL = 'gemma4:e4b';
@@ -30,6 +38,7 @@ export interface LocalLlmConfig {
   timeoutMs: number;
   maxConcurrency: number;
   temperature: number;
+  engine: LocalEngineMode;
 }
 
 export function getProviderMode(env: NodeJS.ProcessEnv = process.env): LlmProviderMode {
@@ -50,6 +59,9 @@ export function readLocalLlmConfig(env: NodeJS.ProcessEnv = process.env): LocalL
     timeoutMs: Math.floor(envNumber(env.LOCAL_LLM_TIMEOUT_MS, 300_000)),
     maxConcurrency: Math.max(1, Math.floor(envNumber(env.LOCAL_LLM_MAX_CONCURRENCY, 1, 1))),
     temperature: envNumber(env.LOCAL_LLM_TEMPERATURE, 0.4),
+    engine: ['http', 'embedded'].includes(String(env.LOCAL_LLM_ENGINE || '').trim().toLowerCase())
+      ? (String(env.LOCAL_LLM_ENGINE).trim().toLowerCase() as LocalEngineMode)
+      : 'auto',
   };
 }
 
@@ -295,14 +307,20 @@ const gate = new Semaphore();
 const normalizeModelName = (name: string) => name.trim().toLowerCase().replace(/:latest$/, '');
 
 export interface LocalLlmStatus {
+  /** An external OpenAI-compatible server answered. */
   reachable: boolean;
+  /** Models the external server lists. */
   models: string[];
-  /** The model that will answer: the configured one, or the only model a single-model server (llama-server, LM Studio) has loaded. */
+  /** The model that will answer: the configured one, the only model a single-model server has loaded, or the built-in model. */
   model: string;
   modelInstalled: boolean;
-  /** Reachable and the model is there: safe for auto mode to route a request here. */
+  /** Something local can answer right now: safe for auto mode to route a request here. */
   ready: boolean;
   baseUrl: string;
+  /** Which engine will answer: an external server, the built-in runtime, or none. */
+  engine: 'http' | 'embedded' | 'none';
+  /** State of the built-in runtime (absent when LOCAL_LLM_ENGINE=http). */
+  embedded?: EmbeddedStatus;
 }
 
 let statusCache: { at: number; key: string; status: LocalLlmStatus } | null = null;
@@ -322,29 +340,111 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
-/** Probes GET {base}/v1/models (cached for a few seconds, so an absent server costs one fast probe, not one per request). */
-export async function getLocalLlmStatus(env: NodeJS.ProcessEnv = process.env, options: { fresh?: boolean } = {}): Promise<LocalLlmStatus> {
-  const cfg = readLocalLlmConfig(env);
-  const key = `${cfg.baseUrl}|${cfg.model}`;
-  if (!options.fresh && statusCache && statusCache.key === key && Date.now() - statusCache.at < STATUS_TTL_MS) return statusCache.status;
-
-  let status: LocalLlmStatus = { reachable: false, models: [], model: cfg.model, modelInstalled: false, ready: false, baseUrl: cfg.baseUrl };
+async function probeHttpServer(cfg: LocalLlmConfig): Promise<{ reachable: boolean; models: string[]; model: string; installed: boolean }> {
+  const down = { reachable: false, models: [] as string[], model: cfg.model, installed: false };
   try {
     const response = await fetchWithTimeout(`${cfg.baseUrl}/v1/models`, { headers: { accept: 'application/json' } }, 1500);
-    if (response.ok) {
-      const data: any = await response.json().catch(() => ({}));
-      const models: string[] = (Array.isArray(data?.data) ? data.data : []).map((entry: any) => String(entry?.id || '')).filter(Boolean);
-      const wanted = normalizeModelName(cfg.model);
-      const exact = models.find((name) => normalizeModelName(name) === wanted);
-      const model = exact ?? (models.length === 1 ? models[0] : cfg.model);
-      const installed = Boolean(exact) || models.length === 1;
-      status = { reachable: true, models, model, modelInstalled: installed, ready: installed, baseUrl: cfg.baseUrl };
-    }
+    if (!response.ok) return down;
+    const data: any = await response.json().catch(() => ({}));
+    const models: string[] = (Array.isArray(data?.data) ? data.data : []).map((entry: any) => String(entry?.id || '')).filter(Boolean);
+    const wanted = normalizeModelName(cfg.model);
+    const exact = models.find((name) => normalizeModelName(name) === wanted);
+    return { reachable: true, models, model: exact ?? (models.length === 1 ? models[0] : cfg.model), installed: Boolean(exact) || models.length === 1 };
   } catch {
-    // not running: reachable stays false
+    return down; // not running
   }
+}
+
+/**
+ * What can answer locally right now. An external server is probed with GET {base}/v1/models; the built-in runtime is asked
+ * whether it loads and whether its model file is on disk. Cached for a few seconds, so an absent server costs one fast probe.
+ * In auto mode an external server wins when it is ready (it is the one the user chose to run), else the built-in runtime.
+ */
+export async function getLocalLlmStatus(env: NodeJS.ProcessEnv = process.env, options: { fresh?: boolean } = {}): Promise<LocalLlmStatus> {
+  const cfg = readLocalLlmConfig(env);
+  const key = [cfg.engine, cfg.baseUrl, cfg.model, env.LOCAL_LLM_MODEL_PATH, env.LOCAL_LLM_MODEL_URI, env.LOCAL_LLM_MODELS_DIR].join('|');
+  if (!options.fresh && statusCache && statusCache.key === key && Date.now() - statusCache.at < STATUS_TTL_MS) return statusCache.status;
+
+  const http = cfg.engine === 'embedded' ? undefined : await probeHttpServer(cfg);
+  let embedded: EmbeddedStatus | undefined;
+  if (cfg.engine !== 'http') {
+    embedded = await getEmbeddedEngine(env).status().catch((err: any) => ({
+      available: false, modelPresent: false, modelName: '', modelUri: '', reason: String(err?.message || err).slice(0, 160),
+    }));
+  }
+
+  const httpReady = Boolean(http?.reachable && http.installed);
+  const embeddedReady = Boolean(embedded?.available && embedded.modelPresent);
+  const engine: LocalLlmStatus['engine'] =
+    cfg.engine === 'http' ? (httpReady ? 'http' : 'none')
+    : cfg.engine === 'embedded' ? (embeddedReady ? 'embedded' : 'none')
+    : httpReady ? 'http' : embeddedReady ? 'embedded' : 'none';
+
+  const status: LocalLlmStatus = {
+    reachable: http?.reachable ?? false,
+    models: http?.models ?? [],
+    model: engine === 'embedded' && embedded ? embedded.modelName : http?.model ?? cfg.model,
+    modelInstalled: engine === 'embedded' ? true : http?.installed ?? false,
+    ready: engine !== 'none',
+    baseUrl: cfg.baseUrl,
+    engine,
+    embedded,
+  };
   statusCache = { at: Date.now(), key, status };
   return status;
+}
+
+function toLocalError(err: unknown): LocalLlmError {
+  if (err instanceof LocalLlmError) return err;
+  if (err instanceof EmbeddedEngineError) {
+    switch (err.reason) {
+      case 'aborted':
+        return new LocalLlmError('local_timeout', 'The local model took too long to answer (the limit is LOCAL_LLM_TIMEOUT_MS). Try a smaller model.', err.details);
+      case 'model_missing':
+        return new LocalLlmError('local_model_missing', err.message, err.details);
+      case 'unavailable':
+        return new LocalLlmError('local_unreachable', err.message, err.details);
+      default:
+        return new LocalLlmError('local_rejected', err.message, err.details);
+    }
+  }
+  return new LocalLlmError('local_rejected', 'The local model failed unexpectedly.', { upstreamMessage: String((err as any)?.message || err).slice(0, 300) });
+}
+
+/** Writes with the built-in runtime. Same gate, same schema translation, same time limit as the external-server path. */
+async function callEmbedded(body: { contents?: any; config?: any }, cfg: LocalLlmConfig, status: LocalLlmStatus, env: NodeJS.ProcessEnv): Promise<LocalGenerateResult> {
+  const request = buildChatRequest(body, status.model, cfg);
+  const engine = getEmbeddedEngine(env);
+  return gate.run(cfg.maxConcurrency, async () => {
+    const controller = new AbortController();
+    const timer = cfg.timeoutMs > 0 ? setTimeout(() => controller.abort(), cfg.timeoutMs) : undefined;
+    try {
+      const out = await engine.complete({
+        messages: request.messages,
+        temperature: request.temperature,
+        maxTokens: request.max_tokens,
+        topP: request.top_p,
+        seed: request.seed,
+        stop: request.stop,
+        jsonSchema: request.response_format?.json_schema?.schema,
+        jsonObject: request.response_format?.type === 'json_object',
+        signal: controller.signal,
+      });
+      return mapChatResponse(
+        {
+          choices: [{ message: { content: out.text }, finish_reason: out.finishReason }],
+          usage: { prompt_tokens: out.promptTokens, completion_tokens: out.completionTokens, total_tokens: (out.promptTokens ?? 0) + (out.completionTokens ?? 0) },
+        },
+        wantsJson(body.config),
+        out.modelName
+      );
+    } catch (err) {
+      resetLocalLlmCache();
+      throw toLocalError(err);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  });
 }
 
 /** Answers one Gemini-shaped request with the local model. Throws LocalLlmError (never anything else). */
@@ -363,7 +463,26 @@ export async function callLocalLlm(body: { model?: string; contents?: any; confi
 
   const requested = body.model && !/^gemini/i.test(body.model) ? body.model : cfg.model;
   const status = await getLocalLlmStatus(env);
+
+  if (status.engine === 'embedded') return callEmbedded(body, cfg, status, env);
+
   if (!status.reachable) {
+    // Nothing external is running: say what could answer instead of only "not reachable".
+    const embedded = status.embedded;
+    if (cfg.engine === 'embedded' || (cfg.engine === 'auto' && embedded)) {
+      if (embedded && !embedded.available) {
+        throw new LocalLlmError('local_unreachable', 'The built-in local model runtime cannot be used on this machine. Start Ollama or LM Studio instead (and set LOCAL_LLM_ENGINE=http).', { embedded: embedded.reason, baseUrl: cfg.baseUrl });
+      }
+      if (embedded && !embedded.modelPresent) {
+        throw new LocalLlmError(
+          cfg.engine === 'embedded' ? 'local_model_missing' : 'local_unreachable',
+          cfg.engine === 'embedded'
+            ? 'The local model file has not been downloaded yet. Run: npm run setup:local-llm'
+            : 'No local model is running. Start Ollama or LM Studio, or download the built-in model with: npm run setup:local-llm',
+          { modelUri: embedded.modelUri, baseUrl: cfg.baseUrl }
+        );
+      }
+    }
     throw new LocalLlmError('local_unreachable', 'The local model server did not answer. Make sure it is running and that LOCAL_LLM_BASE_URL points to it.', { baseUrl: cfg.baseUrl });
   }
   const wanted = normalizeModelName(requested);

@@ -34,3 +34,7 @@ public/assets/aistudio/
 *.patch
 tmp/
 
+# Built-in local model weights downloaded by `npm install` / `npm run setup:local-llm` (several GB, never committed)
+models/
+*.gguf
+!tests/fixtures/tiny-random.gguf

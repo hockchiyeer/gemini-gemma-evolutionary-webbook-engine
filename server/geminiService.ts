@@ -416,21 +416,42 @@ export async function handleGeminiStream(req: IncomingMessage, res: ServerRespon
 export async function handleLocalLlmHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   const cfg = readLocalLlmConfig();
   const status = await getLocalLlmStatus(process.env, { fresh: true });
+  const embedded = status.embedded;
+
+  const steps: string[] = [];
+  if (!status.ready) {
+    if (cfg.engine !== "embedded") {
+      steps.push(
+        !status.reachable
+          ? "No local model server answered. Install Ollama, run it, then: ollama pull " + cfg.model
+          : "The server is running but does not have " + cfg.model + ". Run: ollama pull " + cfg.model + " (or set LOCAL_LLM_MODEL to one of: " + (status.models.join(", ") || "none installed") + ")"
+      );
+    }
+    if (cfg.engine !== "http" && embedded) {
+      steps.push(
+        !embedded.available
+          ? "Built-in runtime: " + (embedded.reason || "not available")
+          : "Built-in runtime: download the model with: npm run setup:local-llm"
+      );
+    }
+  }
+
   sendJson(res, 200, {
     provider: getProviderMode(),
+    engineSetting: cfg.engine,
+    engine: status.engine,
+    ready: status.ready,
     baseUrl: cfg.baseUrl,
     configuredModel: cfg.model,
     reachable: status.reachable,
     models: status.models,
     modelInstalled: status.modelInstalled,
     modelInUse: status.model,
-    ready: status.ready,
+    embedded: embedded
+      ? { available: embedded.available, modelPresent: embedded.modelPresent, modelName: embedded.modelName, modelUri: embedded.modelUri, backend: embedded.backend, reason: embedded.reason }
+      : undefined,
     geminiKeyPresent: Boolean(process.env.GEMINI_API_KEY),
-    hint: !status.reachable
-      ? "No local model server answered. Install Ollama, run it, then: ollama pull " + cfg.model
-      : !status.modelInstalled
-        ? "The server is running but does not have " + cfg.model + ". Run: ollama pull " + cfg.model + " (or set LOCAL_LLM_MODEL to one of: " + (status.models.join(", ") || "none installed") + ")"
-        : undefined,
+    hint: steps.length ? steps.join(" Or: ") : undefined,
   });
 }
 

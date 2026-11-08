@@ -33,6 +33,7 @@ const EXCLUDED_NAMES = new Set([
   'artifacts',
   'coverage',
   'dist',
+  'models',
   'node_modules',
   'test-results',
   'tests',
@@ -40,6 +41,7 @@ const EXCLUDED_NAMES = new Set([
 
 const EXCLUDED_SUFFIXES = [
   '.log',
+  '.gguf', // local model weights are several GB and are downloaded by `npm install`, never shipped
 ];
 
 function toPosixPath(value) {

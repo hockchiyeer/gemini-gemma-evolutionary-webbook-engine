@@ -9,6 +9,9 @@
     "build": "vite build",
     "start": "tsx server/server.ts",
     "preview": "vite preview",
+    "postinstall": "node scripts/setup-local-llm.mjs --postinstall",
+    "setup:local-llm": "node scripts/setup-local-llm.mjs",
+    "local-llm:check": "node scripts/setup-local-llm.mjs --check",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "lint:tests": "tsc --project tsconfig.tests.json --noEmit",
@@ -16,7 +19,7 @@
     "package:aistudio": "node scripts/package-google-ai-studio.mjs",
     "test": "node tests/scripts/run-local-cypress.cjs",
     "test:e2e": "node tests/scripts/run-cypress-with-reports.cjs",
-    "test:server": "tsx tests/server/documentTitle.test.ts && tsx tests/server/evolutionService.test.ts && tsx tests/server/googleSearchFallback.test.ts && tsx tests/server/hyperlinkExport.test.ts && tsx tests/server/googleSearchFallbackClient.test.ts && tsx tests/server/fallbackNotice.test.ts && tsx tests/server/cjkPagination.test.ts && tsx tests/server/printFriendlyReportExport.test.ts && tsx tests/server/pdfCjkFont.test.ts && tsx tests/server/cjkHighResExport.test.ts && tsx tests/server/geminiErrors.test.ts && tsx tests/server/geminiRetry.test.ts && tsx tests/server/contentFilters.test.ts && tsx tests/server/assembleWebBook.test.ts && tsx tests/server/knowledgeReferences.test.ts && tsx tests/server/exportLabels.test.ts && tsx tests/server/snippetOnlyPagination.test.ts && tsx tests/server/offlineBookDepth.test.ts && tsx tests/server/offlineReliability.test.ts && tsx tests/server/offlineQuality.test.ts && tsx tests/server/localLlm.test.ts",
+    "test:server": "tsx tests/server/documentTitle.test.ts && tsx tests/server/evolutionService.test.ts && tsx tests/server/googleSearchFallback.test.ts && tsx tests/server/hyperlinkExport.test.ts && tsx tests/server/googleSearchFallbackClient.test.ts && tsx tests/server/fallbackNotice.test.ts && tsx tests/server/cjkPagination.test.ts && tsx tests/server/printFriendlyReportExport.test.ts && tsx tests/server/pdfCjkFont.test.ts && tsx tests/server/cjkHighResExport.test.ts && tsx tests/server/geminiErrors.test.ts && tsx tests/server/geminiRetry.test.ts && tsx tests/server/contentFilters.test.ts && tsx tests/server/assembleWebBook.test.ts && tsx tests/server/knowledgeReferences.test.ts && tsx tests/server/exportLabels.test.ts && tsx tests/server/snippetOnlyPagination.test.ts && tsx tests/server/offlineBookDepth.test.ts && tsx tests/server/offlineReliability.test.ts && tsx tests/server/offlineQuality.test.ts && tsx tests/server/localLlm.test.ts && tsx tests/server/embeddedRuntime.test.ts && tsx tests/server/embeddedLlm.test.ts && tsx tests/server/setupLocalLlm.test.ts && tsx tests/server/envExample.test.ts",
     "cy:run": "cypress run --config-file tests/cypress.config.cjs",
     "cy:run:local": "node tests/scripts/run-cypress-with-reports.cjs",
     "cy:open": "cypress open --config-file tests/cypress.config.cjs",
@@ -56,5 +59,8 @@
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
+  },
+  "optionalDependencies": {
+    "node-llama-cpp": "^3.22.3"
   }
 }

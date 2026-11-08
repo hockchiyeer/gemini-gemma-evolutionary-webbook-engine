@@ -24,11 +24,12 @@ import type { WebPageGenotype } from '../../src/types.ts';
 
 console.warn = () => {};
 const realFetch = globalThis.fetch;
-const envKeys = ['LLM_PROVIDER', 'LOCAL_LLM_BASE_URL', 'LOCAL_LLM_MODEL', 'LOCAL_LLM_TIMEOUT_MS', 'LOCAL_LLM_MAX_CONCURRENCY', 'LOCAL_LLM_TEMPERATURE', 'GEMINI_API_KEY', 'GEMINI_MAX_ATTEMPTS'] as const;
+const envKeys = ['LLM_PROVIDER', 'LOCAL_LLM_ENGINE', 'LOCAL_LLM_MODEL_PATH', 'LOCAL_LLM_MODEL_URI', 'LOCAL_LLM_MODELS_DIR', 'LOCAL_LLM_BASE_URL', 'LOCAL_LLM_MODEL', 'LOCAL_LLM_TIMEOUT_MS', 'LOCAL_LLM_MAX_CONCURRENCY', 'LOCAL_LLM_TEMPERATURE', 'GEMINI_API_KEY', 'GEMINI_MAX_ATTEMPTS'] as const;
 const savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 const setEnv = (values: Partial<Record<(typeof envKeys)[number], string | undefined>>) => {
   for (const key of envKeys) delete process.env[key];
-  for (const [key, value] of Object.entries(values)) if (value !== undefined) process.env[key] = value;
+  // These tests are about external servers: the built-in runtime (and any model a developer has downloaded) must not take part.
+  for (const [key, value] of Object.entries({ LOCAL_LLM_ENGINE: 'http', ...values })) if (value !== undefined) process.env[key] = value;
   resetLocalLlmCache();
 };
 
@@ -108,8 +109,11 @@ const setEnv = (values: Partial<Record<(typeof envKeys)[number], string | undefi
 
   // configuration
   assert.deepEqual(readLocalLlmConfig({ LOCAL_LLM_BASE_URL: 'http://127.0.0.1:1234/v1/', LOCAL_LLM_MODEL: 'qwen3:8b', LOCAL_LLM_MAX_CONCURRENCY: '0' } as any), {
-    baseUrl: 'http://127.0.0.1:1234', model: 'qwen3:8b', timeoutMs: 300000, maxConcurrency: 1, temperature: 0.4,
+    baseUrl: 'http://127.0.0.1:1234', model: 'qwen3:8b', timeoutMs: 300000, maxConcurrency: 1, temperature: 0.4, engine: 'auto',
   });
+  assert.equal(readLocalLlmConfig({ LOCAL_LLM_ENGINE: 'Embedded' } as any).engine, 'embedded');
+  assert.equal(readLocalLlmConfig({ LOCAL_LLM_ENGINE: 'http' } as any).engine, 'http');
+  assert.equal(readLocalLlmConfig({ LOCAL_LLM_ENGINE: 'nonsense' } as any).engine, 'auto');
   assert.equal(readLocalLlmConfig({} as any).model, 'gemma4:e4b');
   assert.equal(getProviderMode({ LLM_PROVIDER: 'LOCAL' } as any), 'local');
   assert.equal(getProviderMode({ LLM_PROVIDER: 'nonsense' } as any), 'auto');
