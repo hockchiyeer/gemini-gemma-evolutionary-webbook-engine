@@ -2,6 +2,8 @@ import type { Chapter, WebBook, WebBookSourceMode } from "../types.ts";
 import { isSnippetOnlySourceMode } from "../types.ts";
 import { CJK_CHAR_PATTERN, countWords, splitIntoSentences } from "../services/searchFallbackShared.ts";
 import { clipLabelAtWordBoundary } from "../services/documentTitle.ts";
+import { cleanChapterContent, cleanTermLabel } from "../services/modelTextCleanup.ts";
+import { dedupeByLabel, localizeVisualSeed, removeRepeatedSections } from "./chapterRedundancy.ts";
 
 export { CJK_CHAR_PATTERN, countWords, splitIntoSentences };
 
@@ -317,26 +319,37 @@ function sanitizeChapterForPresentation(chapter: Chapter, index: number, topic =
     .replace(/^(?:Chapter\s+\d+|第\s*[0-9一二三四五六七八九十百]+\s*[章节節部分]|\d+)\s*[:：\-–—]\s*/i, "")
     .trim();
   const title = strippedTitle || fallbackTitle;
-  const content = sanitizeNarrativeText(chapter?.content || "");
-  const visualSeed = sanitizeStructuredLabel(chapter?.visualSeed, title || safeTopic) || safeTopic;
+  const rawContent = sanitizeNarrativeText(cleanChapterContent(chapter?.content || "", title));
   const definitions = Array.isArray(chapter?.definitions)
-    ? chapter.definitions
-      .map((definition) => ({
-        ...definition,
-        term: sanitizeStructuredLabel(definition?.term, ""),
-        description: sanitizeInlineText(definition?.description || ""),
-      }))
-      .filter((definition) => definition.term && definition.description)
+    ? dedupeByLabel(
+      chapter.definitions
+        .map((definition) => ({
+          ...definition,
+          term: cleanTermLabel(sanitizeStructuredLabel(definition?.term, "")),
+          description: sanitizeInlineText(cleanChapterContent(definition?.description || "")),
+        }))
+        .filter((definition) => definition.term && definition.description),
+      (definition) => definition.term
+    )
     : [];
   const subTopics = Array.isArray(chapter?.subTopics)
-    ? chapter.subTopics
-      .map((subTopic) => ({
-        ...subTopic,
-        title: sanitizeStructuredLabel(subTopic?.title, ""),
-        summary: sanitizeInlineText(subTopic?.summary || ""),
-      }))
-      .filter((subTopic) => subTopic.title && subTopic.summary)
+    ? dedupeByLabel(
+      chapter.subTopics
+        .map((subTopic) => ({
+          ...subTopic,
+          title: cleanTermLabel(sanitizeStructuredLabel(subTopic?.title, "")),
+          summary: sanitizeInlineText(cleanChapterContent(subTopic?.summary || "")),
+        }))
+        .filter((subTopic) => subTopic.title && subTopic.summary),
+      (subTopic) => subTopic.title
+    )
     : [];
+  // The glossary and the sub-topic list are printed as their own sections; the body must not say the same thing again.
+  const content = removeRepeatedSections(rawContent, definitions, subTopics);
+  const visualSeed = localizeVisualSeed(
+    sanitizeStructuredLabel(chapter?.visualSeed, title || safeTopic) || safeTopic,
+    { title, sample: content.slice(0, 1500) }
+  );
   const sourceUrls = Array.isArray(chapter?.sourceUrls)
     ? chapter.sourceUrls
       .map((source) => {

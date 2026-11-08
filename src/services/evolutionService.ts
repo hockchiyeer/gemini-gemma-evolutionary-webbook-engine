@@ -1691,7 +1691,7 @@ async function assembleWebBookCore(
       2. A brief 2-sentence focus description.
       3. 4 key terms to define.
       4. 3 sub-topics to explore.
-      5. A visual seed keyword for an image.
+      5. A short visual-concept caption for an image, written in the same language as the topic and the chapter titles (never English for a non-English book).
       Make the chapters cover different ground so that no chapter repeats another. Write titles without chapter numbers.`,
       config: {
         systemInstruction: "You are a master book architect. Output valid JSON only. Create an outline of exactly 10 chapters that flows logically from introduction to advanced concepts and future outlook. Ensure all terms and sub-topics are meaningful and relevant to the topic. Strictly avoid placeholders, random strings, or meaningless identifiers.",
@@ -1743,6 +1743,7 @@ async function assembleWebBookCore(
           Write a comprehensive, high-quality chapter of ${CHAPTER_TARGET_WORDS.min}-${CHAPTER_TARGET_WORDS.max} words (for Chinese, Japanese or Korean, roughly ${CHAPTER_TARGET_WORDS.min * 2}-${CHAPTER_TARGET_WORDS.max * 2} characters) in 5 to 7 well-developed paragraphs separated by blank lines. Include concrete facts, examples, mechanisms and trade-offs from the evidence.
           Also provide detailed definitions (2-4 sentences each) for: ${(chapterOutline.terms || []).join(', ')}.
           And detailed analyses (3-5 sentences each) for the sub-topics: ${(chapterOutline.subTopicTitles || []).join(', ')}.
+          The "content" field is the narrative only: do NOT put the term definitions or the sub-topic analyses inside it (they are returned in the "definitions" and "subTopics" fields and printed separately), do not add lists of key concepts, and do not restate them. Write everything in the same language as the topic.
           Formatting: plain text only. No Markdown at all (no #, ##, ###, ** or bullet symbols) and no heading line that repeats the chapter title or number; always close every parenthesis you open; put each term in the "term" field exactly as given, without a trailing colon.`,
           config: {
             systemInstruction: "You are an expert technical writer. Output valid JSON only. Be detailed, authoritative, and academic in tone. Ensure all definitions and sub-topic analyses are meaningful, human-readable, and relevant to the chapter. Strictly avoid generating random numbers, long strings of digits, or meaningless placeholder text.",
