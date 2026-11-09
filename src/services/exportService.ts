@@ -13,6 +13,7 @@ import {
   getWebBookElement,
   prepareExportContent,
 } from './exportDocument';
+import { loadExportLibrary } from './lazyExportLibs';
 import { CjkFontUnavailableError, loadCjkFontBase64, prefetchCjkFont, registerCjkFont } from './pdfCjkFont';
 
 function formatSourceLink(source: string | { title: string; url: string }): string {
@@ -124,8 +125,8 @@ function webBookHasCjk(webBook: WebBook): boolean {
  */
 export function prewarmExportAssets(webBook: WebBook): () => void {
   const timerId = setTimeout(() => {
-    void import('jspdf').catch(() => undefined);
-    void import('html2canvas').catch(() => undefined);
+    void loadExportLibrary('jspdf', () => import('jspdf')).catch(() => undefined);
+    void loadExportLibrary('html2canvas', () => import('html2canvas')).catch(() => undefined);
     try {
       if (webBookHasCjk(webBook)) void prefetchCjkFont();
     } catch {
@@ -153,7 +154,7 @@ export async function exportWebBookWithJsPdf(
     cjkFontBase64 = await loadCjkFontBase64();
   }
 
-  const { jsPDF } = await import('jspdf');
+  const { jsPDF } = await loadExportLibrary('jspdf', () => import('jspdf'));
   const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
   if (cjkFontBase64) {
     registerCjkFont(doc, cjkFontBase64);

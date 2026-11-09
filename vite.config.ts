@@ -10,8 +10,10 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss(), geminiPlugin(), googleSearchFallbackPlugin()],
     // html2canvas and jspdf are only imported when an export button is clicked. In the Vite dev server (AI Studio) a late-discovered
     // dependency triggers a re-optimisation that invalidates the already-issued module URL ("Failed to fetch dynamically imported module").
+    // jspdf loads canvg and dompurify (and fflate / fast-png) lazily; if they are only discovered at the first export click, Vite re-optimises
+    // and the already-open page asks for the outdated /node_modules/.vite/deps/jspdf.js?v=<old hash>. Listing them here pre-bundles them at start.
     optimizeDeps: {
-      include: ['html2canvas', 'jspdf'],
+      include: ['html2canvas', 'jspdf', 'canvg', 'dompurify', 'fflate', 'fast-png'],
     },
     resolve: {
       alias: {

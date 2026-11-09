@@ -4,6 +4,7 @@ import { getChapterSourceLinks, sanitizeWebBookForPresentation } from '../utils/
 import { downloadBlob, getExportFileName } from './exportDocument';
 import { getWebBookDocumentTitle, summarizeTitle } from './documentTitle';
 import { getExportLabels } from './exportLabels';
+import { loadExportLibrary } from './lazyExportLibs';
 
 // ---------------------------------------------------------------------------
 // Print-friendly report, "reader mode" edition
@@ -710,7 +711,7 @@ export async function renderPrintFriendlyReportCanvases(webBook: WebBook): Promi
     ];
   }
 
-  const html2canvasModule = await import('html2canvas');
+  const html2canvasModule = await loadExportLibrary('html2canvas', () => import('html2canvas'));
   const html2canvas = (html2canvasModule.default || html2canvasModule) as (
     element: HTMLElement,
     options?: Record<string, unknown>
@@ -815,7 +816,7 @@ export async function exportPrintFriendlyWebBookToImage(webBook: WebBook): Promi
 
 async function exportRasterPdf(webBook: WebBook): Promise<void> {
   const canvases = await renderPrintFriendlyReportCanvases(webBook);
-  const { jsPDF } = await import('jspdf');
+  const { jsPDF } = await loadExportLibrary('jspdf', () => import('jspdf'));
   const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
   const a4WidthPt = 595.28;
   const a4HeightPt = 841.89;
