@@ -18,6 +18,7 @@ import {
   exportPrintFriendlyWebBookToPdf,
   exportWebBookToHtml,
   exportWebBookToPdf,
+  prewarmExportAssets,
   exportWebBookToTxt,
   exportWebBookToWord,
   printWebBook,
@@ -53,6 +54,10 @@ export default function App() {
   useEffect(() => {
     document.title = getWebBookDocumentTitle(webBook?.topic);
   }, [webBook?.topic]);
+
+  useEffect(() => {
+    if (webBook) prewarmExportAssets(webBook);
+  }, [webBook]);
 
   const runExport = async (action: () => Promise<void>) => {
     setIsExporting(true);

@@ -13,7 +13,7 @@ import {
   getWebBookElement,
   prepareExportContent,
 } from './exportDocument';
-import { CjkFontUnavailableError, loadCjkFontBase64, registerCjkFont } from './pdfCjkFont';
+import { CjkFontUnavailableError, loadCjkFontBase64, prefetchCjkFont, registerCjkFont } from './pdfCjkFont';
 
 function formatSourceLink(source: string | { title: string; url: string }): string {
   return typeof source === 'string' ? source : `${source.title} - ${source.url}`;
@@ -116,6 +116,22 @@ function webBookHasCjk(webBook: WebBook): boolean {
       (ch?.definitions || []).some((d) => cjkRegex.test(d?.term || '') || cjkRegex.test(d?.description || '')) ||
       (ch?.subTopics || []).some((s) => cjkRegex.test(s?.title || '') || cjkRegex.test(s?.summary || ''))
   );
+}
+
+/**
+ * Called once a book is on screen. Loads the export libraries and, for CJK books, the 7 MB font in the background so that the export click
+ * does not depend on downloads through the hosted preview's rate limit. Everything here is best effort and silent.
+ */
+export function prewarmExportAssets(webBook: WebBook): void {
+  setTimeout(() => {
+    void import('jspdf').catch(() => undefined);
+    void import('html2canvas').catch(() => undefined);
+    try {
+      if (webBookHasCjk(webBook)) void prefetchCjkFont();
+    } catch {
+      /* ignore */
+    }
+  }, 2000);
 }
 
 export async function exportWebBookWithJsPdf(
