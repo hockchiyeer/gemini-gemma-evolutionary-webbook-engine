@@ -25,7 +25,8 @@ assert.equal(selectRelevantPages(topic, [pages[2], pages[3]]).length, 2);
 assert.equal(selectRelevantPages('Climate', pages).length, 2); // short topic: only the two furniture pages are removed
 // "definitions" that are the rest of a news sentence
 assert.equal(isEventFragmentDefinition('颜登逸', '于9月20日在隆雪华堂配合 百年堂庆 所举办的系列活动之一——"国是论坛"开幕礼致辞时，如是说道。'), true);
-assert.equal(isEventFragmentDefinition('首相', '9月20日在国会宣布了新的预算案。'), true);
+assert.equal(isEventFragmentDefinition('首相', '9月20日在国会宣布了新的预算案，如是说道。'), true);
+assert.equal(isEventFragmentDefinition('改革运动', '在1990年代兴起并影响至今的社会政治活动。'), false);
 assert.equal(isEventFragmentDefinition('公民', '在一个国家宪法下被赋予权利与义务、享有法律地位的政治个体。'), false);
 assert.equal(isEventFragmentDefinition('政治整合', '指不同政治实体在意识形态和组织上进行融合或合作的过程。'), false);
 console.log('evidenceQuality tests passed');

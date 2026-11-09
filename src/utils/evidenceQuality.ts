@@ -79,6 +79,8 @@ export function isEventFragmentDefinition(term: string, description: string): bo
   const text = String(description ?? '').trim();
   if (!text) return false;
   if (/^于/.test(text)) return true;
-  if (/^(?:在|从|自)?\s*[\d一二三四五六七八九十]{1,4}\s*[年月日号]/.test(text)) return true;
-  return /(?:如是说道|表示|指出|说道|强调道?)[，,。.]?\s*[”"」』]?\s*$/.test(text) && String(term ?? '').trim().length <= 6;
+  const hasReportingVerb = /(?:如是说道|表示|指出|说道|强调道?)[，,。.]?\s*[”"」』]?\s*$/.test(text);
+  if (hasReportingVerb && String(term ?? '').trim().length <= 6) return true;
+  if (hasReportingVerb && /^(?:在|从|自)?\s*[\d一二三四五六七八九十]{1,4}\s*[年月日号]/.test(text)) return true;
+  return false;
 }
