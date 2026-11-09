@@ -13,6 +13,7 @@ import { WebBookViewer } from './WebBookViewer';
 import { WebBookErrorBoundary } from './WebBookErrorBoundary';
 import { useWebBookEngine } from './hooks/useWebBookEngine';
 import { getWebBookDocumentTitle } from './services/documentTitle';
+import { setFontProgressListener } from './services/pdfCjkFont';
 import {
   exportPrintFriendlyWebBookToImage,
   exportPrintFriendlyWebBookToPdf,
@@ -28,6 +29,7 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showArtifacts, setShowArtifacts] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
   const {
@@ -56,19 +58,29 @@ export default function App() {
   }, [webBook?.topic]);
 
   useEffect(() => {
-    if (webBook) prewarmExportAssets(webBook);
+    if (!webBook) return;
+    const cleanup = prewarmExportAssets(webBook);
+    return () => {
+      cleanup?.();
+    };
   }, [webBook]);
 
   const runExport = async (action: () => Promise<void>) => {
     setIsExporting(true);
+    setExportStatus('Preparing export…');
     setExportError(null);
+    setFontProgressListener((status) => {
+      setExportStatus(status);
+    });
     try {
       await action();
     } catch (err: any) {
       console.error('Export failed:', err);
       setExportError(err?.message || 'Export failed. Please try again or check the console for details.');
     } finally {
+      setFontProgressListener(null);
       setIsExporting(false);
+      setExportStatus(null);
     }
   };
 
@@ -78,6 +90,7 @@ export default function App() {
         webBook={webBook}
         isBusy={isBusy}
         isExporting={isExporting}
+        exportStatus={exportStatus}
         onNewSearch={startNewSearch}
         onToggleHistory={() => setShowHistory(true)}
         onExportPdf={() => webBook ? runExport(() => exportWebBookToPdf(webBook)) : Promise.resolve()}
@@ -90,6 +103,20 @@ export default function App() {
       />
 
       <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8 print:block print:p-0">
+        {isExporting && exportStatus && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="lg:col-span-12 bg-[#141414] text-[#E4E3E0] px-4 py-3 rounded flex items-center justify-between mb-4 shadow-lg border border-[#141414]"
+          >
+            <div className="flex items-center gap-3">
+              <Loader2 size={16} className="animate-spin text-[#E4E3E0]" />
+              <span className="font-mono text-xs uppercase tracking-wider font-semibold">{exportStatus}</span>
+            </div>
+            <span className="text-[10px] uppercase tracking-widest opacity-60">Export in progress</span>
+          </div>
+        )}
+
         {exportError && (
           <div className="lg:col-span-12 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
             <strong className="font-bold">Error! </strong>

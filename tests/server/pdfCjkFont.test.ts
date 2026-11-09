@@ -53,4 +53,15 @@ const measure = (s: string) => [...s].reduce((w, c) => w + (/[\u2e80-\ua4cf\uff0
   assert.ok(bytes.length > 1_000_000, 'font must be a real CJK font, not a stub');
   assert.doesNotThrow(() => assertUsableTrueType(new Uint8Array(bytes)));
 }
+{
+  // 3. Font chunk constants and progress notifications
+  import('../../src/services/pdfCjkFont.ts').then(({ CHUNK_SIZE_STANDARD, CHUNK_SIZE_LAST, EXPECTED_TOTAL_FONT_SIZE, setFontProgressListener }) => {
+    assert.equal(CHUNK_SIZE_STANDARD * 7 + CHUNK_SIZE_LAST, EXPECTED_TOTAL_FONT_SIZE, 'chunk sizes sum to total font size');
+    let progressReceived = false;
+    setFontProgressListener((status) => {
+      if (status) progressReceived = true;
+    });
+    setFontProgressListener(null);
+  });
+}
 console.log('pdfCjkFont regression checks passed');

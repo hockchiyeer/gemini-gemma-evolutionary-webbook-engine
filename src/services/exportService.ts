@@ -122,8 +122,8 @@ function webBookHasCjk(webBook: WebBook): boolean {
  * Called once a book is on screen. Loads the export libraries and, for CJK books, the 7 MB font in the background so that the export click
  * does not depend on downloads through the hosted preview's rate limit. Everything here is best effort and silent.
  */
-export function prewarmExportAssets(webBook: WebBook): void {
-  setTimeout(() => {
+export function prewarmExportAssets(webBook: WebBook): () => void {
+  const timerId = setTimeout(() => {
     void import('jspdf').catch(() => undefined);
     void import('html2canvas').catch(() => undefined);
     try {
@@ -132,6 +132,10 @@ export function prewarmExportAssets(webBook: WebBook): void {
       /* ignore */
     }
   }, 2000);
+
+  return () => {
+    clearTimeout(timerId);
+  };
 }
 
 export async function exportWebBookWithJsPdf(
