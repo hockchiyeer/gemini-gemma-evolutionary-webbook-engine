@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isBibliographicCitation, isSiteChromePage, selectRelevantPages, topicOverlap } from '../../src/utils/evidenceQuality.ts';
+import { isBibliographicCitation, isEventFragmentDefinition, isSiteChromePage, selectRelevantPages, topicOverlap } from '../../src/utils/evidenceQuality.ts';
 
 assert.equal(isSiteChromePage('https://www.orientaldaily.com.my/about', '公司简介 (orientaldaily.com.my)'), true);
 assert.equal(isSiteChromePage('https://www.orientaldaily.com.my/news/ufood-activities', '活动'), true);
@@ -23,4 +23,9 @@ assert.deepEqual(selectRelevantPages(topic, pages).map((p) => p.url), ['https://
 // never empties the book
 assert.equal(selectRelevantPages(topic, [pages[2], pages[3]]).length, 2);
 assert.equal(selectRelevantPages('Climate', pages).length, 2); // short topic: only the two furniture pages are removed
+// "definitions" that are the rest of a news sentence
+assert.equal(isEventFragmentDefinition('颜登逸', '于9月20日在隆雪华堂配合 百年堂庆 所举办的系列活动之一——"国是论坛"开幕礼致辞时，如是说道。'), true);
+assert.equal(isEventFragmentDefinition('首相', '9月20日在国会宣布了新的预算案。'), true);
+assert.equal(isEventFragmentDefinition('公民', '在一个国家宪法下被赋予权利与义务、享有法律地位的政治个体。'), false);
+assert.equal(isEventFragmentDefinition('政治整合', '指不同政治实体在意识形态和组织上进行融合或合作的过程。'), false);
 console.log('evidenceQuality tests passed');

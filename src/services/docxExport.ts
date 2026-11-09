@@ -1,7 +1,7 @@
 import { getExportLabels } from './exportLabels';
 import { strToU8, zipSync } from 'fflate';
 import type { Chapter, WebBook } from '../types';
-import { buildChapterRenderPlan, getChapterSourceLinks } from '../utils/webBookRender';
+import { buildChapterRenderPlan, getChapterSourceLinks, hasRealVisualCaption } from '../utils/webBookRender';
 
 export interface DocxChapterImageAsset {
   altText: string;
@@ -502,7 +502,7 @@ export function buildWebBookDocx(
       );
       nextDrawingId += 1;
 
-      if (chapter.visualSeed?.trim()) {
+      if (hasRealVisualCaption(chapter)) {
         documentBlocks.push(
           paragraph(textRun(chapter.visualSeed.trim()), { style: 'Caption' }),
         );

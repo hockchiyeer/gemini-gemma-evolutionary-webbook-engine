@@ -4,7 +4,7 @@ import type { WebBook } from './types';
 import { isSnippetOnlySourceMode } from './types';
 import { getExportLabels, type ExportLabels } from './services/exportLabels';
 import { summarizeTitle } from './services/documentTitle';
-import { buildChapterRenderPlan, getChapterSourceLinks, normalizeSourceLink, sanitizeWebBookForPresentation } from './utils/webBookRender';
+import { buildChapterRenderPlan, getChapterSourceLinks, hasRealVisualCaption, normalizeSourceLink, sanitizeWebBookForPresentation } from './utils/webBookRender';
 
 interface WebBookViewerProps {
   webBook: WebBook;
@@ -150,9 +150,11 @@ export function WebBookViewer({ webBook }: WebBookViewerProps) {
                               className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000 scale-105 group-hover:scale-100"
                             />
                           </div>
-                          <div className="absolute -bottom-4 right-8 max-w-[75%] bg-white border border-[#141414] px-4 py-2 text-[10px] uppercase font-bold tracking-widest flex items-center gap-3 shadow-md break-words">
-                            <ImageIcon size={12} /> {chapter.visualSeed}
-                          </div>
+                          {hasRealVisualCaption(chapter) && (
+                            <div className="absolute -bottom-4 right-8 max-w-[75%] bg-white border border-[#141414] px-4 py-2 text-[10px] uppercase font-bold tracking-widest flex items-center gap-3 shadow-md break-words">
+                              <ImageIcon size={12} /> {chapter.visualSeed}
+                            </div>
+                          )}
                         </div>
                       </>
                     ) : (

@@ -3,7 +3,7 @@ import type { DocxChapterImageAsset } from './docxExport';
 import { buildWebBookDocx } from './docxExport';
 import { getWebBookDocumentTitle } from './documentTitle';
 import { getExportLabels } from './exportLabels';
-import { getChapterSourceLinks, sanitizeWebBookForPresentation } from '../utils/webBookRender';
+import { getChapterSourceLinks, hasRealVisualCaption, sanitizeWebBookForPresentation } from '../utils/webBookRender';
 import {
   buildPdfHtmlDocument,
   buildPrintHtmlDocument,
@@ -52,7 +52,7 @@ export async function exportWebBookToTxt(webBook: WebBook): Promise<void> {
     text += `${chapterHeading}\n`;
     text += `${'='.repeat(getTextVisualWidth(chapterHeading))}\n\n`;
     text += `${chapter.content}\n\n`;
-    if (chapter.visualSeed?.trim()) {
+    if (hasRealVisualCaption(chapter)) {
       text += `${L.upper(L.visualConcept)}${L.colon}${chapter.visualSeed.trim()}\n\n`;
     }
 
@@ -337,7 +337,7 @@ export async function exportWebBookWithJsPdf(
         doc.addImage(imgAsset.bytes, imgAsset.extension.toUpperCase(), imgX, currentY, imgW, imgH);
         currentY += imgH + 8;
 
-        if (chapter.visualSeed) {
+        if (hasRealVisualCaption(chapter)) {
           doc.setFont('helvetica', 'normal');
           doc.setFontSize(7.5);
           doc.setTextColor(120, 120, 120);
@@ -347,7 +347,7 @@ export async function exportWebBookWithJsPdf(
       } catch (imgErr) {
         console.warn('Failed to draw chapter image in PDF:', imgErr);
       }
-    } else if (chapter.visualSeed) {
+    } else if (hasRealVisualCaption(chapter)) {
       const seedLines = doc.splitTextToSize(`"${chapter.visualSeed}"`, contentWidth - 28);
       const boxHeight = 24 + seedLines.length * 12;
       checkPageSpace(boxHeight + 12);

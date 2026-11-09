@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { dedupeByLabel, localizeVisualSeed, removeRepeatedSections } from '../../src/utils/chapterRedundancy.ts';
+import { dedupeByLabel, hasRealVisualCaption, isDerivedCaption, localizeVisualSeed, removeRepeatedSections } from '../../src/utils/chapterRedundancy.ts';
 import { sanitizeWebBookForPresentation } from '../../src/utils/webBookRender.ts';
 import type { WebBook } from '../../src/types.ts';
 
@@ -56,3 +56,18 @@ console.log('chapterRedundancy tests passed');
   assert.ok(!removeRepeatedSections(three, d, []).includes('非营利性团体'));
 }
 console.log('redundancy safety-net test passed');
+
+// the default caption (topic + title glued together) is not a caption
+{
+  const topic = '马来西亚摆脱种族主义与宗教桎梏的可能性与出路';
+  const title = '从族群关系问题看马来西亚的公民教育';
+  assert.equal(isDerivedCaption(`${topic} ${title}`, { title, topic }), true);
+  assert.equal(isDerivedCaption(title, { title, topic }), true);
+  assert.equal(isDerivedCaption('一张展示多族群学生在同一间教室讨论宪法的插图', { title, topic }), false);
+  const seed = localizeVisualSeed(`${topic} ${title}`, { title, topic, sample: '马来西亚是一个多元族群、多元文化的社会。' });
+  assert.equal(seed, title);
+  assert.equal(hasRealVisualCaption({ visualSeed: seed, title }), false);
+  assert.equal(hasRealVisualCaption({ visualSeed: '多族群学生讨论宪法的场景', title }), true);
+  assert.equal(hasRealVisualCaption({ visualSeed: '', title }), false);
+}
+console.log('derived caption tests passed');

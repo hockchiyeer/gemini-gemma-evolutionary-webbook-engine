@@ -69,3 +69,16 @@ export function selectRelevantPages<T extends { url?: string; title?: string; co
   if (withoutChrome.length >= MIN_PAGES_AFTER_FILTER) return withoutChrome;
   return pages;
 }
+
+/**
+ * A "definition" that is really the rest of a news sentence: "颜登逸: 于9月20日在隆雪华堂…开幕礼致辞时，如是说道。" came from splitting
+ * "颜登逸是于9月20日…" at the 是. A definition explains what the term is; a description that opens with 于 / a date, or ends in a
+ * reporting verb ("…如是说道"), only says when and where someone spoke.
+ */
+export function isEventFragmentDefinition(term: string, description: string): boolean {
+  const text = String(description ?? '').trim();
+  if (!text) return false;
+  if (/^于/.test(text)) return true;
+  if (/^(?:在|从|自)?\s*[\d一二三四五六七八九十]{1,4}\s*[年月日号]/.test(text)) return true;
+  return /(?:如是说道|表示|指出|说道|强调道?)[，,。.]?\s*[”"」』]?\s*$/.test(text) && String(term ?? '').trim().length <= 6;
+}

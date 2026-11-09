@@ -3,7 +3,13 @@ import { isSnippetOnlySourceMode } from "../types.ts";
 import { CJK_CHAR_PATTERN, countWords, splitIntoSentences } from "../services/searchFallbackShared.ts";
 import { clipLabelAtWordBoundary } from "../services/documentTitle.ts";
 import { cleanChapterContent, cleanTermLabel } from "../services/modelTextCleanup.ts";
-import { dedupeByLabel, localizeVisualSeed, removeRepeatedSections } from "./chapterRedundancy.ts";
+import { dedupeByLabel, hasRealVisualCaption as chapterHasRealVisualCaption, localizeVisualSeed, removeRepeatedSections } from "./chapterRedundancy.ts";
+import { isEventFragmentDefinition } from "./evidenceQuality.ts";
+
+/** False for the engine's default caption (topic + title) that is reduced to the chapter title; exports and the viewer then print no caption line. */
+export function hasRealVisualCaption(chapter: { visualSeed?: string; title?: string }): boolean {
+  return chapterHasRealVisualCaption(chapter);
+}
 
 export { CJK_CHAR_PATTERN, countWords, splitIntoSentences };
 
@@ -328,7 +334,7 @@ function sanitizeChapterForPresentation(chapter: Chapter, index: number, topic =
           term: cleanTermLabel(sanitizeStructuredLabel(definition?.term, "")),
           description: sanitizeInlineText(cleanChapterContent(definition?.description || "")),
         }))
-        .filter((definition) => definition.term && definition.description),
+        .filter((definition) => definition.term && definition.description && !isEventFragmentDefinition(definition.term, definition.description)),
       (definition) => definition.term
     )
     : [];
@@ -348,7 +354,7 @@ function sanitizeChapterForPresentation(chapter: Chapter, index: number, topic =
   const content = removeRepeatedSections(rawContent, definitions, subTopics);
   const visualSeed = localizeVisualSeed(
     sanitizeStructuredLabel(chapter?.visualSeed, title || safeTopic) || safeTopic,
-    { title, sample: content.slice(0, 1500) }
+    { title, sample: content.slice(0, 1500), topic: safeTopic }
   );
   const sourceUrls = Array.isArray(chapter?.sourceUrls)
     ? chapter.sourceUrls

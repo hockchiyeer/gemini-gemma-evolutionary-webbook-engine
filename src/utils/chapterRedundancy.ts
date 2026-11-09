@@ -120,14 +120,44 @@ function looksEnglish(seed: string): boolean {
   return words.length >= 2 && words.some((w) => ENGLISH_HINT_WORDS.has(w));
 }
 
+function pairSet(text: string): Set<string> {
+  const flat = String(text ?? '').toLowerCase().replace(WORDS_ONLY, '');
+  const out = new Set<string>();
+  for (let i = 0; i < flat.length - 1; i += 1) out.add(flat.slice(i, i + 2));
+  return out;
+}
+
+/**
+ * The engine's default caption is the topic and the chapter title glued together ("马来西亚摆脱种族主义…出路 从族群关系问题看…"). That is a
+ * search keyword string, not a description of a picture: true when (nearly) everything in the caption is already in the topic or title.
+ */
+export function isDerivedCaption(caption: string, context: { title: string; topic?: string }): boolean {
+  const own = pairSet(caption);
+  if (own.size === 0) return true;
+  const known = new Set([...pairSet(context.title), ...pairSet(context.topic || '')]);
+  let inside = 0;
+  for (const pair of own) if (known.has(pair)) inside += 1;
+  return inside / own.size >= 0.85;
+}
+
+/** True when the chapter carries a caption worth printing as "视觉概念": one that is not just its title (see localizeVisualSeed). */
+export function hasRealVisualCaption(chapter: { visualSeed?: string; title?: string }): boolean {
+  const flat = (s: string) => String(s ?? '').toLowerCase().replace(WORDS_ONLY, '');
+  const seed = flat(chapter?.visualSeed || '');
+  return seed.length > 0 && seed !== flat(chapter?.title || '');
+}
+
 /**
  * The visual-concept caption in the language of the book. A caption written in another language than the book (typically English in a
  * Chinese, Japanese, Korean, Malay, Spanish, French or German book) is replaced by the chapter title, which is always in the book's language.
+ * A caption that only restates the topic and title is reduced to the chapter title as well; it then still seeds the picture, but
+ * hasRealVisualCaption() is false and no "视觉概念" line is printed for it.
  */
-export function localizeVisualSeed(seed: string, context: { title: string; sample: string }): string {
+export function localizeVisualSeed(seed: string, context: { title: string; sample: string; topic?: string }): string {
   const caption = plain(seed);
   const title = plain(context.title);
   if (!caption || !title) return caption || title;
+  if (isDerivedCaption(caption, { title, topic: context.topic })) return title;
   const sample = `${context.title}\n${context.sample}`;
   const locale = detectTextLocale(sample);
   if (locale === 'en') return caption;

@@ -28,7 +28,7 @@ import {
   stripSnippetSplices,
 } from "./searchFallbackShared";
 import { BOOK_CHAPTER_COUNT, cleanChapterContent, cleanTermLabel } from './modelTextCleanup';
-import { isBibliographicCitation, isSiteChromePage, selectRelevantPages } from '../utils/evidenceQuality';
+import { isBibliographicCitation, isEventFragmentDefinition, isSiteChromePage, selectRelevantPages } from '../utils/evidenceQuality';
 import {
   CHAPTER_NUMBER_PREFIX,
   MIN_CHAPTER_TEXT_PAGES,
@@ -1002,6 +1002,7 @@ export function extractDefinitionsFromSentences(sentences: string[], sourceUrl: 
       const term = match[1].trim();
       const description = match[2].trim();
       if (pattern === DEFINITION_PATTERNS[3] && !isPlausibleChineseTerm(term)) continue;
+      if (isEventFragmentDefinition(term, description)) continue;
       if (
         isValidConceptDefinition(term, description)
         && isMeaningful(term, description)

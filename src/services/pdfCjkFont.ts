@@ -25,33 +25,18 @@ export class CjkFontUnavailableError extends Error {
 }
 
 /**
- * URLs of the font file known to the bundler. A glob is used on purpose: a plain "new URL(<literal path>, import.meta.url)" makes Vite
- * resolve the file while it TRANSFORMS this module. exportService now imports this module statically, so if the 17 MB font were not
- * part of a deployment (Google AI Studio can drop large binaries) that transform error would break the whole app at start-up instead
- * of only the export. A glob that matches nothing is simply empty, so a missing font ends in the clear CjkFontUnavailableError.
- * Outside Vite (Node tests) the glob call does not exist and is guarded.
+ * Candidate locations for the CJK TrueType font, most reliable first.
+ * The literal new URL(...) is statically analyzed by Vite during build and dev,
+ * and resolves to a file: URL in Node tests. The public/fonts directory provides
+ * an unhashed direct fallback.
  */
-function bundledFontUrls(): string[] {
-  try {
-    const found = import.meta.glob('../assets/fonts/NotoSansSC-Subset.ttf', { query: '?url', import: 'default', eager: true }) as Record<string, unknown>;
-    return Object.values(found).filter((url): url is string => typeof url === 'string' && url.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-/** Candidate locations, most reliable first. Duplicates are removed. */
 export function getCjkFontUrls(): string[] {
   const urls: string[] = [];
   try {
-    // Built from a variable so that Vite does not try to resolve the file at transform time (see bundledFontUrls).
-    const relative = `../assets/fonts/${CJK_FONT_FILE}`;
-    urls.push(new URL(relative, import.meta.url).href);
+    urls.push(new URL('../assets/fonts/NotoSansSC-Subset.ttf', import.meta.url).href);
   } catch {
     /* import.meta.url unavailable */
   }
-  urls.push(...bundledFontUrls());
-  // Legacy location, kept so an existing public/fonts copy keeps working.
   const base = (import.meta as any)?.env?.BASE_URL ?? '/';
   urls.push(`${base}fonts/${CJK_FONT_FILE}`);
   return [...new Set(urls)];
@@ -127,6 +112,50 @@ export function assertUsableTrueType(bytes: Uint8Array): void {
 
 let cachedFontBase64: string | null = null;
 
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+const FONT_CACHE_NAME = 'webbook-cjk-font-v1';
+const MAX_FETCH_ATTEMPTS = 5;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The font is a 17 MB file. Hosted previews (Google AI Studio) answer such a download with "429 Too Many Requests" or a 5xx while they are
+ * busy, which used to fail the export on the first try. Those statuses are retried with a growing pause (the server's Retry-After wins);
+ * every other status (404, ...) fails at once and moves on to the next candidate URL.
+ */
+async function fetchWithRetry(url: string): Promise<Response> {
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await fetch(url);
+    if (response.ok) return response;
+    if (!RETRYABLE_STATUS.has(response.status) || attempt >= MAX_FETCH_ATTEMPTS) {
+      throw new Error(`request failed (${response.status}${attempt > 1 ? `, after ${attempt} attempts` : ''})`);
+    }
+    const retryAfter = Number(response.headers.get('retry-after'));
+    await sleep(Math.min(10000, retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** (attempt - 1)));
+  }
+}
+
+async function readFromBrowserCache(url: string): Promise<Uint8Array | null> {
+  try {
+    if (typeof caches === 'undefined') return null;
+    const cache = await caches.open(FONT_CACHE_NAME);
+    const hit = await cache.match(url);
+    return hit ? new Uint8Array(await hit.arrayBuffer()) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeToBrowserCache(url: string, bytes: Uint8Array): Promise<void> {
+  try {
+    if (typeof caches === 'undefined') return;
+    const cache = await caches.open(FONT_CACHE_NAME);
+    await cache.put(url, new Response(bytes as unknown as BodyInit, { headers: { 'content-type': 'font/ttf' } }));
+  } catch {
+    /* quota or private mode: the font is simply downloaded again next time */
+  }
+}
+
 async function fetchFontBytes(url: string): Promise<Uint8Array> {
   if (url.startsWith('file:')) {
     // Node (server-side tests / scripts): fetch() cannot read file: URLs.
@@ -136,15 +165,44 @@ async function fetchFontBytes(url: string): Promise<Uint8Array> {
     const { fileURLToPath } = await import(/* @vite-ignore */ urlModule);
     return new Uint8Array(await readFile(fileURLToPath(url)));
   }
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`request failed (${response.status})`);
-  return new Uint8Array(await response.arrayBuffer());
+  const cached = await readFromBrowserCache(url);
+  if (cached) {
+    try {
+      assertUsableTrueType(cached);
+      return cached;
+    } catch {
+      /* a bad cached copy is ignored and downloaded again */
+    }
+  }
+  const response = await fetchWithRetry(url);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  assertUsableTrueType(bytes);
+  await writeToBrowserCache(url, bytes);
+  return bytes;
+}
+
+/** The same file is listed as an absolute and as a root-relative URL; resolve and drop the duplicates so it is not requested twice. */
+function distinctUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const url of urls) {
+    let key = url;
+    try {
+      key = new URL(url, typeof location !== 'undefined' ? location.href : undefined).href;
+    } catch {
+      /* keep as given */
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(url);
+  }
+  return out;
 }
 
 export async function loadCjkFontBase64(urls: string[] = getCjkFontUrls()): Promise<string> {
   if (cachedFontBase64) return cachedFontBase64;
   const attempts: string[] = [];
-  for (const url of urls) {
+  for (const url of distinctUrls(urls)) {
     try {
       const bytes = await fetchFontBytes(url);
       assertUsableTrueType(bytes);
