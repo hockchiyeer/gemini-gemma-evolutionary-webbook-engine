@@ -159,7 +159,50 @@ const FONT_CACHE_NAME = 'webbook-cjk-font-v2';
 const LEGACY_FONT_CACHE_NAMES = ['webbook-cjk-font-v1'];
 const MAX_FETCH_ATTEMPTS = 5;
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/**
+ * Time budgets. The 8-piece download is the "gentle" route that the rate-limited AI Studio preview needs, but on a machine where it
+ * does not make progress (stalled request, busy dev server, ...) it must not keep the user waiting: when a piece has not arrived within
+ * CHUNK_STALL_TIMEOUT_MS (retries and pauses included) the piece route is abandoned and the whole font file is requested instead.
+ * Pieces that did arrive stay in Cache Storage, so a later retry on a rate-limited host continues where it stopped.
+ */
+export const CHUNK_STALL_TIMEOUT_MS = 10_000;
+/** Budget for one attempt at the single 7.6 MB file (it is a local/same-origin file; this only guards against a stalled connection). */
+export const FULL_FONT_TIMEOUT_MS = 60_000;
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+
+/** Runs `task` with an AbortSignal that fires after `timeoutMs`; a timeout is reported as `timeoutMessage` instead of a bare AbortError. */
+async function withDeadline<T>(timeoutMs: number, timeoutMessage: string, task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await task(controller.signal);
+  } catch (err) {
+    if (timedOut) throw new Error(timeoutMessage);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * The font is a 7.6 MB file. Hosted previews (Google AI Studio) answer such a download with "429 Too Many Requests" or a 5xx while they are
@@ -170,10 +213,11 @@ async function fetchWithRetry(
   url: string,
   maxAttempts = MAX_FETCH_ATTEMPTS,
   maxPauseMs = 10000,
-  onRetry?: (attempt: number, maxAttempts: number, waitMs: number) => void
+  onRetry?: (attempt: number, maxAttempts: number, waitMs: number) => void,
+  signal?: AbortSignal
 ): Promise<Response> {
   for (let attempt = 1; ; attempt += 1) {
-    const response = await fetch(url);
+    const response = await fetch(url, signal ? { signal } : undefined);
     if (response.ok) return response;
     if (!RETRYABLE_STATUS.has(response.status) || attempt >= maxAttempts) {
       throw new Error(`request failed (${response.status}${attempt > 1 ? `, after ${attempt} attempts` : ''})`);
@@ -181,7 +225,7 @@ async function fetchWithRetry(
     const retryAfter = Number(response.headers.get('retry-after'));
     const waitMs = Math.min(maxPauseMs, retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** (attempt - 1));
     if (onRetry) onRetry(attempt, maxAttempts, waitMs);
-    await sleep(waitMs);
+    await sleep(waitMs, signal);
   }
 }
 
@@ -225,7 +269,7 @@ async function readLocalFile(url: string): Promise<Uint8Array> {
   return new Uint8Array(await readFile(fileURLToPath(url)));
 }
 
-async function fetchFontBytes(url: string): Promise<Uint8Array> {
+async function fetchFontBytes(url: string, signal?: AbortSignal): Promise<Uint8Array> {
   if (url.startsWith('file:')) return readLocalFile(url);
   const cached = await readFromBrowserCache(url);
   if (cached) {
@@ -236,9 +280,15 @@ async function fetchFontBytes(url: string): Promise<Uint8Array> {
       /* a bad cached copy is ignored and downloaded again */
     }
   }
-  const response = await fetchWithRetry(url, MAX_FETCH_ATTEMPTS, 10000, (_attempt, _max, waitMs) => {
-    reportExportStatus(`Preparing font… retrying in ${Math.round(waitMs / 1000)}s`);
-  });
+  const response = await fetchWithRetry(
+    url,
+    MAX_FETCH_ATTEMPTS,
+    10000,
+    (_attempt, _max, waitMs) => {
+      reportExportStatus(`Preparing font… retrying in ${Math.round(waitMs / 1000)}s`);
+    },
+    signal
+  );
   const bytes = new Uint8Array(await response.arrayBuffer());
   assertUsableTrueType(bytes);
   await writeToBrowserCache(url, bytes);
@@ -345,7 +395,7 @@ async function describeChunkProblem(bytes: Uint8Array, spec: FontChunkSpec): Pro
   return null;
 }
 
-async function fetchChunkBytes(spec: FontChunkSpec): Promise<Uint8Array> {
+async function fetchChunkBytes(spec: FontChunkSpec, signal?: AbortSignal): Promise<Uint8Array> {
   if (spec.url.startsWith('file:')) {
     const bytes = await readLocalFile(spec.url);
     const problem = await describeChunkProblem(bytes, spec);
@@ -357,9 +407,15 @@ async function fetchChunkBytes(spec: FontChunkSpec): Promise<Uint8Array> {
   let problem: string | null = null;
   // A truncated or wrong body (proxy error page, cut connection) gets one more download before the piece is given up on.
   for (let download = 1; download <= 2; download += 1) {
-    const response = await fetchWithRetry(spec.url, 8, 15000, (_attempt, _max, waitMs) => {
-      reportExportStatus(`Preparing font… retrying in ${Math.round(waitMs / 1000)}s`);
-    });
+    const response = await fetchWithRetry(
+      spec.url,
+      8,
+      15000,
+      (_attempt, _max, waitMs) => {
+        reportExportStatus(`Preparing font… retrying in ${Math.round(waitMs / 1000)}s`);
+      },
+      signal
+    );
     const bytes = new Uint8Array(await response.arrayBuffer());
     problem = await describeChunkProblem(bytes, spec);
     if (problem === null) {
@@ -370,12 +426,22 @@ async function fetchChunkBytes(spec: FontChunkSpec): Promise<Uint8Array> {
   throw new Error(problem as string);
 }
 
-export async function loadChunkedFont(chunks: FontChunkSpec[]): Promise<Uint8Array> {
+/**
+ * Downloads the pieces one after another. Every piece has its own `stallTimeoutMs` budget (retries and pauses included); a piece that
+ * does not arrive in time fails the whole load so the caller can switch to the single-file route instead of waiting indefinitely.
+ */
+export async function loadChunkedFont(chunks: FontChunkSpec[], stallTimeoutMs: number = CHUNK_STALL_TIMEOUT_MS): Promise<Uint8Array> {
   const parts: Uint8Array[] = [];
   for (let i = 0; i < chunks.length; i += 1) {
     reportExportStatus(`Preparing font… (${i + 1}/${chunks.length})`);
     try {
-      parts.push(await fetchChunkBytes(chunks[i]));
+      parts.push(
+        await withDeadline(
+          stallTimeoutMs,
+          `no progress for ${Math.round(stallTimeoutMs / 1000)}s`,
+          (signal) => fetchChunkBytes(chunks[i], signal)
+        )
+      );
     } catch (err) {
       throw new Error(`font part ${i + 1}/${chunks.length}: ${(err as Error)?.message || err}`);
     }
@@ -426,13 +492,18 @@ async function loadCjkFontBase64Uncached(urls?: string[]): Promise<string> {
         return cachedFontBase64;
       } catch (err) {
         attempts.push(`${(err as Error)?.message || err}`);
+        // Piece route stalled or failed: do not keep the user waiting, request the complete font file right away.
+        console.warn('CJK font pieces could not be loaded in time; falling back to the complete font file:', err);
+        reportExportStatus('Preparing font… (switching to complete font file)');
       }
     }
   }
   for (const url of distinctUrls(urls ?? getCjkFontUrls())) {
     reportExportStatus('Preparing font…');
     try {
-      const bytes = await fetchFontBytes(url);
+      const bytes = await withDeadline(FULL_FONT_TIMEOUT_MS, `no response within ${Math.round(FULL_FONT_TIMEOUT_MS / 1000)}s`, (signal) =>
+        fetchFontBytes(url, signal)
+      );
       assertUsableTrueType(bytes);
       cachedFontBase64 = await encodeFont(bytes);
       reportExportStatus(null);
