@@ -128,10 +128,9 @@ export function assertUsableTrueType(bytes: Uint8Array): void {
 
 let cachedFontBase64: string | null = null;
 
-export const CHUNK_SIZE_STANDARD = 1048576; // 1 MB (part-00.bin through part-06.bin)
-export const CHUNK_SIZE_LAST = 259268;     // part-07.bin
-export const EXPECTED_TOTAL_FONT_SIZE = 7599300;
-
+// --- Progress reporting -------------------------------------------------------------------------------------------------------------
+// The export UI registers one listener (App.tsx) and shows the latest status line ("Preparing font… (3/8)", retry pauses, ...).
+// A message sent while nobody listens (background prefetch) is replayed to the next listener.
 export type FontProgressCallback = (status: string | null) => void;
 let fontProgressListener: FontProgressCallback | null = null;
 let lastProgressMessage: string | null = null;
@@ -143,19 +142,21 @@ export function setFontProgressListener(listener: FontProgressCallback | null): 
   }
 }
 
-function notifyFontProgress(message: string | null): void {
+/** Sends a status line to the export UI; null clears it. Also used by exportService ("Generating PDF…"). Never throws. */
+export function reportExportStatus(message: string | null): void {
   lastProgressMessage = message;
   if (fontProgressListener) {
     try {
       fontProgressListener(message);
     } catch {
-      /* ignore */
+      /* a failing UI callback must never break the export */
     }
   }
 }
 
 const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 const FONT_CACHE_NAME = 'webbook-cjk-font-v2';
+const LEGACY_FONT_CACHE_NAMES = ['webbook-cjk-font-v1'];
 const MAX_FETCH_ATTEMPTS = 5;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -179,9 +180,7 @@ async function fetchWithRetry(
     }
     const retryAfter = Number(response.headers.get('retry-after'));
     const waitMs = Math.min(maxPauseMs, retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** (attempt - 1));
-    if (onRetry) {
-      onRetry(attempt, maxAttempts, waitMs);
-    }
+    if (onRetry) onRetry(attempt, maxAttempts, waitMs);
     await sleep(waitMs);
   }
 }
@@ -207,15 +206,27 @@ async function writeToBrowserCache(url: string, bytes: Uint8Array): Promise<void
   }
 }
 
-async function fetchFontBytes(url: string): Promise<Uint8Array> {
-  if (url.startsWith('file:')) {
-    // Node (server-side tests / scripts): fetch() cannot read file: URLs.
-    const fsModule = 'node:fs/promises';
-    const urlModule = 'node:url';
-    const { readFile } = await import(/* @vite-ignore */ fsModule);
-    const { fileURLToPath } = await import(/* @vite-ignore */ urlModule);
-    return new Uint8Array(await readFile(fileURLToPath(url)));
+/** Frees the Cache Storage entries of earlier versions of this loader (each held a full copy of the font). Best effort. */
+async function purgeLegacyFontCaches(): Promise<void> {
+  try {
+    if (typeof caches === 'undefined') return;
+    for (const name of LEGACY_FONT_CACHE_NAMES) await caches.delete(name);
+  } catch {
+    /* ignore */
   }
+}
+
+async function readLocalFile(url: string): Promise<Uint8Array> {
+  // Node (server-side tests / scripts): fetch() cannot read file: URLs.
+  const fsModule = 'node:fs/promises';
+  const urlModule = 'node:url';
+  const { readFile } = await import(/* @vite-ignore */ fsModule);
+  const { fileURLToPath } = await import(/* @vite-ignore */ urlModule);
+  return new Uint8Array(await readFile(fileURLToPath(url)));
+}
+
+async function fetchFontBytes(url: string): Promise<Uint8Array> {
+  if (url.startsWith('file:')) return readLocalFile(url);
   const cached = await readFromBrowserCache(url);
   if (cached) {
     try {
@@ -226,7 +237,7 @@ async function fetchFontBytes(url: string): Promise<Uint8Array> {
     }
   }
   const response = await fetchWithRetry(url, MAX_FETCH_ATTEMPTS, 10000, (_attempt, _max, waitMs) => {
-    notifyFontProgress(`Preparing font… retrying in ${Math.round(waitMs / 1000)}s`);
+    reportExportStatus(`Preparing font… retrying in ${Math.round(waitMs / 1000)}s`);
   });
   const bytes = new Uint8Array(await response.arrayBuffer());
   assertUsableTrueType(bytes);
@@ -252,62 +263,124 @@ function distinctUrls(urls: string[]): string[] {
   return out;
 }
 
-/**
- * The font is also shipped as ~1 MB pieces (src/assets/fonts/chunks). The hosted AI Studio preview answers a single 7 MB download with
- * "429 Too Many Requests"; small sequential requests that are cached one by one let a later attempt (or the background prefetch) fetch only
- * what is still missing, instead of starting the whole download again.
- */
-function bundledFontChunkUrls(): string[] {
+// --- Font delivered as verified pieces ----------------------------------------------------------------------------------------------
+// The font is also shipped as ~1 MB pieces (src/assets/fonts/chunks) described by chunks/manifest.json (sizes and SHA-256 of every piece).
+// The hosted AI Studio preview answers a single 7 MB download with "429 Too Many Requests"; small sequential requests that are cached one by
+// one let a later attempt (or the background prefetch) fetch only what is still missing. The manifest is written by
+// scripts/split-cjk-font.mjs, so replacing the font never requires editing sizes in this file.
+
+export interface FontChunkSpec {
+  url: string;
+  size: number;
+  sha256?: string;
+}
+
+export interface FontManifest {
+  file?: string;
+  totalSize: number;
+  sha256?: string;
+  chunks: Array<{ name: string; size: number; sha256?: string }>;
+}
+
+export function isFontManifest(value: unknown): value is FontManifest {
+  const manifest = value as FontManifest | null;
+  if (!manifest || typeof manifest !== 'object') return false;
+  if (!Number.isInteger(manifest.totalSize) || manifest.totalSize <= 0) return false;
+  if (!Array.isArray(manifest.chunks) || manifest.chunks.length === 0) return false;
+  let sum = 0;
+  for (const chunk of manifest.chunks) {
+    if (!chunk || typeof chunk.name !== 'string' || !chunk.name) return false;
+    if (!Number.isInteger(chunk.size) || chunk.size <= 0) return false;
+    if (chunk.sha256 !== undefined && !/^[0-9a-f]{64}$/i.test(chunk.sha256)) return false;
+    sum += chunk.size;
+  }
+  return sum === manifest.totalSize;
+}
+
+/** Pairs every manifest entry with its URL; null when a piece has no URL (an incomplete deployment must not be half-used). */
+export function buildChunkSpecs(manifest: FontManifest, urlFor: (name: string) => string | undefined): FontChunkSpec[] | null {
+  const specs: FontChunkSpec[] = [];
+  for (const chunk of manifest.chunks) {
+    const url = urlFor(chunk.name);
+    if (!url) return null;
+    specs.push({ url, size: chunk.size, sha256: chunk.sha256 });
+  }
+  return specs;
+}
+
+function bundledChunkSpecs(): FontChunkSpec[] {
   try {
-    const found = import.meta.glob('../assets/fonts/chunks/*.bin', { query: '?url', import: 'default', eager: true }) as Record<string, unknown>;
-    return Object.keys(found)
-      .sort()
-      .map((key) => found[key])
-      .filter((url): url is string => typeof url === 'string' && url.length > 0);
+    const manifests = import.meta.glob('../assets/fonts/chunks/manifest.json', { import: 'default', eager: true }) as Record<string, unknown>;
+    const manifest = Object.values(manifests)[0];
+    if (!isFontManifest(manifest)) return [];
+    const urls = import.meta.glob('../assets/fonts/chunks/*.bin', { query: '?url', import: 'default', eager: true }) as Record<string, unknown>;
+    const byName = new Map<string, string>();
+    for (const [key, url] of Object.entries(urls)) {
+      if (typeof url === 'string' && url.length > 0) byName.set(key.split('/').pop() as string, url);
+    }
+    return buildChunkSpecs(manifest, (name) => byName.get(name)) ?? [];
   } catch {
     return [];
   }
 }
 
-async function fetchChunkBytes(url: string, index: number, totalChunks: number): Promise<Uint8Array> {
-  if (url.startsWith('file:')) {
-    const fsModule = 'node:fs/promises';
-    const urlModule = 'node:url';
-    const { readFile } = await import(/* @vite-ignore */ fsModule);
-    const { fileURLToPath } = await import(/* @vite-ignore */ urlModule);
-    return new Uint8Array(await readFile(fileURLToPath(url)));
+async function sha256Hex(bytes: Uint8Array): Promise<string | null> {
+  try {
+    const subtle = (globalThis as any).crypto?.subtle;
+    if (!subtle) return null; // insecure context: the size check still applies
+    const digest = new Uint8Array(await subtle.digest('SHA-256', bytes));
+    return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  } catch {
+    return null;
   }
-  const expectedSize = totalChunks === 8 ? (index === totalChunks - 1 ? CHUNK_SIZE_LAST : CHUNK_SIZE_STANDARD) : undefined;
-  const cached = await readFromBrowserCache(url);
-  if (cached && (expectedSize === undefined || cached.length === expectedSize)) {
-    return cached;
-  }
-  const response = await fetchWithRetry(url, 8, 15000, (_attempt, _max, waitMs) => {
-    notifyFontProgress(`Preparing font… piece ${index + 1}/${totalChunks} (retrying in ${Math.round(waitMs / 1000)}s)`);
-  });
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.length === 0) throw new Error('empty response');
-  if (expectedSize !== undefined && bytes.length !== expectedSize) {
-    throw new Error(`expected ${expectedSize} bytes but got ${bytes.length}`);
-  }
-  await writeToBrowserCache(url, bytes);
-  return bytes;
 }
 
-async function loadChunkedFont(chunkUrls: string[]): Promise<Uint8Array> {
+/** Null when the piece is exactly what the manifest says; otherwise a short description of the problem. */
+async function describeChunkProblem(bytes: Uint8Array, spec: FontChunkSpec): Promise<string | null> {
+  if (bytes.length !== spec.size) return `size mismatch: expected ${spec.size} bytes but got ${bytes.length}`;
+  if (spec.sha256) {
+    const actual = await sha256Hex(bytes);
+    if (actual !== null && actual !== spec.sha256.toLowerCase()) return 'checksum mismatch';
+  }
+  return null;
+}
+
+async function fetchChunkBytes(spec: FontChunkSpec): Promise<Uint8Array> {
+  if (spec.url.startsWith('file:')) {
+    const bytes = await readLocalFile(spec.url);
+    const problem = await describeChunkProblem(bytes, spec);
+    if (problem) throw new Error(problem);
+    return bytes;
+  }
+  const cached = await readFromBrowserCache(spec.url);
+  if (cached && (await describeChunkProblem(cached, spec)) === null) return cached;
+  let problem: string | null = null;
+  // A truncated or wrong body (proxy error page, cut connection) gets one more download before the piece is given up on.
+  for (let download = 1; download <= 2; download += 1) {
+    const response = await fetchWithRetry(spec.url, 8, 15000, (_attempt, _max, waitMs) => {
+      reportExportStatus(`Preparing font… retrying in ${Math.round(waitMs / 1000)}s`);
+    });
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    problem = await describeChunkProblem(bytes, spec);
+    if (problem === null) {
+      await writeToBrowserCache(spec.url, bytes);
+      return bytes;
+    }
+  }
+  throw new Error(problem as string);
+}
+
+export async function loadChunkedFont(chunks: FontChunkSpec[]): Promise<Uint8Array> {
   const parts: Uint8Array[] = [];
-  for (let i = 0; i < chunkUrls.length; i += 1) {
-    notifyFontProgress(`Preparing font… (${i + 1}/${chunkUrls.length})`);
+  for (let i = 0; i < chunks.length; i += 1) {
+    reportExportStatus(`Preparing font… (${i + 1}/${chunks.length})`);
     try {
-      parts.push(await fetchChunkBytes(chunkUrls[i], i, chunkUrls.length));
+      parts.push(await fetchChunkBytes(chunks[i]));
     } catch (err) {
-      throw new Error(`font part ${i + 1}/${chunkUrls.length}: ${(err as Error)?.message || err}`);
+      throw new Error(`font part ${i + 1}/${chunks.length}: ${(err as Error)?.message || err}`);
     }
   }
   const total = parts.reduce((sum, part) => sum + part.length, 0);
-  if (chunkUrls.length === 8 && total !== EXPECTED_TOTAL_FONT_SIZE) {
-    throw new Error(`assembled font size mismatch: expected ${EXPECTED_TOTAL_FONT_SIZE} bytes, got ${total}`);
-  }
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const part of parts) {
@@ -334,15 +407,22 @@ export async function loadCjkFontBase64(urls?: string[]): Promise<string> {
   return loadCjkFontBase64Uncached(urls);
 }
 
+async function encodeFont(bytes: Uint8Array): Promise<string> {
+  // The base64 conversion of 7.6 MB takes a moment on the main thread; let the status line paint first.
+  reportExportStatus('Preparing font… (encoding)');
+  await sleep(30);
+  return toBase64(bytes);
+}
+
 async function loadCjkFontBase64Uncached(urls?: string[]): Promise<string> {
   const attempts: string[] = [];
+  void purgeLegacyFontCaches();
   if (!urls) {
-    const chunkUrls = bundledFontChunkUrls();
-    if (chunkUrls.length > 0) {
+    const chunks = bundledChunkSpecs();
+    if (chunks.length > 0) {
       try {
-        const assembled = await loadChunkedFont(chunkUrls);
-        cachedFontBase64 = toBase64(assembled);
-        notifyFontProgress(null);
+        cachedFontBase64 = await encodeFont(await loadChunkedFont(chunks));
+        reportExportStatus(null);
         return cachedFontBase64;
       } catch (err) {
         attempts.push(`${(err as Error)?.message || err}`);
@@ -350,18 +430,18 @@ async function loadCjkFontBase64Uncached(urls?: string[]): Promise<string> {
     }
   }
   for (const url of distinctUrls(urls ?? getCjkFontUrls())) {
-    notifyFontProgress('Preparing font…');
+    reportExportStatus('Preparing font…');
     try {
       const bytes = await fetchFontBytes(url);
       assertUsableTrueType(bytes);
-      cachedFontBase64 = toBase64(bytes);
-      notifyFontProgress(null);
+      cachedFontBase64 = await encodeFont(bytes);
+      reportExportStatus(null);
       return cachedFontBase64;
     } catch (err) {
       attempts.push(`${url}: ${(err as Error)?.message || err}`);
     }
   }
-  notifyFontProgress(null);
+  reportExportStatus(null);
   throw new CjkFontUnavailableError(attempts);
 }
 

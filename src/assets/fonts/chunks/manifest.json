@@ -1,0 +1,47 @@
+{
+  "file": "NotoSansSC-Subset.ttf",
+  "totalSize": 7599300,
+  "sha256": "adb86e0007ecf6ac93835f985da85a3ca824f0ccc47a0bf140994691ad87948e",
+  "chunks": [
+    {
+      "name": "part-00.bin",
+      "size": 1048576,
+      "sha256": "a07db6da984949d2f157e34ac4ed8a223fe167eba3ead447a34e08eda77f2b34"
+    },
+    {
+      "name": "part-01.bin",
+      "size": 1048576,
+      "sha256": "51ce6af91b2efe89bf510eaf05704067222ce5616509f3b8bbcf971e1d0b0c04"
+    },
+    {
+      "name": "part-02.bin",
+      "size": 1048576,
+      "sha256": "b1c485dc49fa4342008567deaf749d25369b7d0056cceb9e10ac0a22149cdfbc"
+    },
+    {
+      "name": "part-03.bin",
+      "size": 1048576,
+      "sha256": "c94d4a4cd51e54a25d16d7723deb3d7cd483cb9ad7430eeca3e6d78f6d012325"
+    },
+    {
+      "name": "part-04.bin",
+      "size": 1048576,
+      "sha256": "a82a8528d9f75d0115319e50f36b3528c3168f7019a7a8d25438c9cb0255bcd5"
+    },
+    {
+      "name": "part-05.bin",
+      "size": 1048576,
+      "sha256": "c8b836c9861bd6593ca45796f13d8e1d0da0493efbc2687d3b3e9ec27a5859ac"
+    },
+    {
+      "name": "part-06.bin",
+      "size": 1048576,
+      "sha256": "67d93013a1f29324aff27c08ce7a23559655022ab25c3a6236903bb9a82bc346"
+    },
+    {
+      "name": "part-07.bin",
+      "size": 259268,
+      "sha256": "badcdebb3a02bfd38199cf970eaf1ea1709890b667281adac7870695b07b3b6f"
+    }
+  ]
+}

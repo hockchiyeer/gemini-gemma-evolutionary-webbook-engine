@@ -27,3 +27,5 @@ pyftsubset "$TMP/static.ttf" \
   --drop-tables+=GPOS,GSUB,BASE,GDEF,STAT,vhea,vmtx,gasp \
   --output-file=src/assets/fonts/NotoSansSC-Subset.ttf
 ls -lh src/assets/fonts/NotoSansSC-Subset.ttf
+# The browser loads the font as small verified pieces (see scripts/split-cjk-font.mjs); rebuild them and the manifest.
+node "$(dirname "$0")/split-cjk-font.mjs"
