@@ -25,18 +25,32 @@ export class CjkFontUnavailableError extends Error {
 }
 
 /**
- * Candidate locations for the CJK TrueType font, most reliable first.
- * The literal new URL(...) is statically analyzed by Vite during build and dev,
- * and resolves to a file: URL in Node tests. The public/fonts directory provides
- * an unhashed direct fallback.
+ * URLs of the font file known to the bundler. A glob is used on purpose: a plain "new URL(<literal path>, import.meta.url)" makes Vite
+ * resolve the file while it TRANSFORMS this module. exportService statically imports this module, so if the 17 MB font were not
+ * part of a deployment that transform error would break the whole app at start-up instead of only the export. A glob that matches nothing is
+ * simply empty, so a missing font ends in the clear CjkFontUnavailableError. Outside Vite (Node tests) the glob call does not exist and is guarded.
  */
+function bundledFontUrls(): string[] {
+  try {
+    const found = import.meta.glob('../assets/fonts/NotoSansSC-Subset.ttf', { query: '?url', import: 'default', eager: true }) as Record<string, unknown>;
+    return Object.values(found).filter((url): url is string => typeof url === 'string' && url.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Candidate locations, most reliable first. Duplicates are removed. */
 export function getCjkFontUrls(): string[] {
   const urls: string[] = [];
   try {
-    urls.push(new URL('../assets/fonts/NotoSansSC-Subset.ttf', import.meta.url).href);
+    // Built from a variable so that Vite does not try to resolve the file at transform time (see bundledFontUrls).
+    const relative = `../assets/fonts/${CJK_FONT_FILE}`;
+    urls.push(new URL(relative, import.meta.url).href);
   } catch {
     /* import.meta.url unavailable */
   }
+  urls.push(...bundledFontUrls());
+  // Direct location, kept so public/fonts copy works unhashed.
   const base = (import.meta as any)?.env?.BASE_URL ?? '/';
   urls.push(`${base}fonts/${CJK_FONT_FILE}`);
   return [...new Set(urls)];
