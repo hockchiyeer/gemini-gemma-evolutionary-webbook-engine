@@ -69,4 +69,29 @@ const page = (id: string, url: string, title: string, content: string): WebPageG
   assert.notEqual(book.sourceMode, 'gemini', 'falls back to the offline book');
 }
 
+// --- 5. 503 at outline stage with < 2 source pages: outlineError is propagated to the fallback note ---
+{
+  const chapterCountsRequested = new Set<string>();
+  globals.fetch = async (_input: unknown, init?: { body?: unknown }) => {
+    const body = JSON.parse(String(init?.body ?? '{}'));
+    if (body.config?.responseSchema?.properties?.outline) {
+      const match = String(body.contents).match(/exactly (\d+) chapters/);
+      if (match) chapterCountsRequested.add(match[1]);
+      return json({ error: { code: 503, status: 'UNAVAILABLE', message: 'The service is temporarily unavailable' } }, 503);
+    }
+    return json({ text: '[]' });
+  };
+  // Exactly 1 page -> buildEvidenceOutline returns [] because < EVIDENCE_OUTLINE_MIN_SOURCES (2)
+  const singlePage = [page('p1', 'https://site1.org/a', '新谣的兴起 - 站点1', '新谣是一种音乐流派。它兴起于八十年代。'.repeat(4))];
+  const book = await assembleWebBook(
+    singlePage,
+    '新加坡歌谣',
+    { sourceMode: 'gemini' as const, generationNote: 'Evidence gathered.', artifacts: { groundingChunks: [] } },
+    { mode: 'google_duckduckgo', geminiModel: 'gemini-3.8-flash' }
+  );
+  assert.ok(chapterCountsRequested.has('10') && chapterCountsRequested.has('6'), 'both primary 10-chapter and compact 6-chapter outline requests were attempted');
+  assert.equal(book.sourceMode, 'hybrid');
+  assert.match(book.generationNote || '', /service temporarily unavailable/, 'root cause is preserved rather than masked as no usable content');
+}
+
 console.log('outlineResilienceFollowups tests passed');
