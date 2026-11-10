@@ -48,6 +48,13 @@ export async function exportWebBookToTxt(webBook: WebBook): Promise<void> {
   let text = `${safeWebBook.topic.toUpperCase()}\n`;
   text += `${L.generatedOn}${L.colon}${new Date(safeWebBook.timestamp).toLocaleString(L.dateLocale)}\n\n`;
 
+  text += `${L.upper(L.tableOfContents)}\n`;
+  text += `${'='.repeat(getTextVisualWidth(L.upper(L.tableOfContents)))}\n\n`;
+  safeWebBook.chapters.forEach((chapter, index) => {
+    text += `${L.chapter(index + 1)}${L.colon}${chapter.title}\n`;
+  });
+  text += '\n\n';
+
   safeWebBook.chapters.forEach((chapter, index) => {
     const chapterHeading = `${L.upper(L.chapter(index + 1))}${L.colon}${chapter.title}`;
     text += `${chapterHeading}\n`;

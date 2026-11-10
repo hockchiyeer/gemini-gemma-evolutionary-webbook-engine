@@ -70,7 +70,14 @@ export const CHAPTER_TARGET_WORDS = { min: 700, max: 900 } as const;
 // A chapter shorter than this is treated as a failed chapter, never padded with filler.
 const MIN_ACCEPTABLE_CHAPTER_WORDS = 120;
 // Simultaneous chapter requests.
-export const CHAPTER_CONCURRENCY = 3;
+// Chapter requests in flight at once. Two keeps a free-tier project under its per-minute limit and keeps each request
+// well inside the server's per-request timeout; three left no room for a retry when one request ran slow.
+export const CHAPTER_CONCURRENCY = 2;
+// How many models one request may be failed over across. Each failover after a timeout costs up to a full server
+// timeout, so the chain is deep enough to ride out a slow or overloaded model, not unbounded.
+export const MODEL_FAILOVER_DEPTH = 4;
+// The 10-chapter outline is the largest single request; if it times out on this many models the 6-chapter outline is tried.
+const OUTLINE_FULL_MAX_MODELS = 2;
 const EVIDENCE_CHARS_PER_SOURCE = 1500;
 const EVIDENCE_TOTAL_CHAR_BUDGET = 12000;
 const MIN_EVOLVED_SOURCES = 6;
@@ -113,6 +120,12 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
 
     const isDailyQuotaExhausted = message.includes('per day limit exceeded') || message.includes('retry in ');
     if (isDailyQuotaExhausted) {
+      throw error;
+    }
+
+    // The server reports that it already retried this request (or that the model timed out). Asking the same model
+    // again only repeats the wait, so the caller fails over to the next model instead.
+    if (error?.retriesExhausted === true) {
       throw error;
     }
 
@@ -222,7 +235,8 @@ function detectGeminiFailureReason(err: any): GeminiFailureReason {
 // if the selected model experiences a temporary 503 high demand spike or 404 deprecation.
 async function generateWithModelFallback(
   requestParams: any,
-  preferredModel?: string
+  preferredModel?: string,
+  options?: { maxModels?: number }
 ): Promise<any> {
   const primaryModel = preferredModel || DEFAULT_GEMINI_MODEL;
   const candidateModels = [
@@ -234,7 +248,7 @@ async function generateWithModelFallback(
     'gemini-3.7-flash',
     'gemini-3.8-flash',
     'gemini-flash-lite-latest',
-  ].filter((m, idx, arr) => arr.indexOf(m) === idx).slice(0, 3);
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx).slice(0, Math.max(1, options?.maxModels ?? MODEL_FAILOVER_DEPTH));
 
   let lastError: any = null;
 
@@ -260,6 +274,7 @@ async function generateWithModelFallback(
           errorObj.status = res.status;
           errorObj.code = resData?.error?.code || res.status;
           errorObj.reason = resData?.error?.reason;
+          errorObj.retriesExhausted = resData?.error?.retriesExhausted === true;
           errorObj.details = resData?.error?.details;
           throw errorObj;
         }
@@ -1168,6 +1183,33 @@ export function cleanSourceTitle(rawTitle: string, url = ''): string {
 // Sentence-opening connectives that make a clipped sentence read as the middle of a thought.
 const LEADING_CONNECTIVE = /^(?:与此同时|同时|此外|另外|此後|此后|然而|但是|不过|可是|于是|接着|其次|最后|并且|但|而|因此|所以|而且|另一方面|however|meanwhile|moreover|furthermore|in addition|additionally|also|and|but|so|dengan itu|selain itu|manakala|namun)\s*[,，、]?\s*/i;
 
+function balanceQuotesAndBrackets(text: string): string {
+  let s = text.trim();
+  const pairs: Array<[string, string]> = [
+    ['「', '」'],
+    ['“', '”'],
+    ['‘', '’'],
+    ['《', '》'],
+    ['(', ')'],
+    ['（', '）'],
+    ['[', ']'],
+    ['【', '】'],
+  ];
+  for (const [open, close] of pairs) {
+    const openCount = (s.match(new RegExp('\\' + open, 'g')) || []).length;
+    const closeCount = (s.match(new RegExp('\\' + close, 'g')) || []).length;
+    if (openCount > closeCount) {
+      const lastOpen = s.lastIndexOf(open);
+      if (lastOpen >= s.length - 2) {
+        s = s.slice(0, lastOpen).trimEnd();
+      } else {
+        s += close;
+      }
+    }
+  }
+  return s;
+}
+
 /** A chapter's own first sentence as a heading: connective dropped, cut at the first clause, short. */
 export function leadSentenceTitle(sentence: string): string {
   // A leading "（来源：…）" / "[1]" group is a citation, not the subject of the sentence.
@@ -1176,7 +1218,8 @@ export function leadSentenceTitle(sentence: string): string {
   const minClause = cjk ? 8 : 20;
   const clause = text.split(/[,;，；、:：]/)[0].trim();
   const base = clause.length >= minClause ? clause : text;
-  return clipLabelAtWordBoundary(base, cjk ? 24 : 60).replace(/…$/, '').replace(/[\s,;:，；：、-]+$/, '').trim();
+  const clipped = clipLabelAtWordBoundary(base, cjk ? 24 : 60).replace(/…$/, '').replace(/[\s,;:，；：、-]+$/, '').trim();
+  return balanceQuotesAndBrackets(clipped);
 }
 
 /**
@@ -1302,9 +1345,15 @@ export function deriveChapterTitle(
   units.forEach(unit => counts.set(unit.url, (counts.get(unit.url) || 0) + 1));
   const ranked = [...counts.entries()].sort((x, y) => y[1] - x[1]).map(([url]) => url);
   const topicKey = normalizeTitleKey(topic);
+  const isChineseTopic = (topic.match(/[\u3400-\u9fff]/g) || []).length > 0;
   const acceptable = (title: string) => {
     const key = normalizeTitleKey(title);
-    return Boolean(key) && !usedTitles.has(key) && key !== topicKey && calculateTextSimilarity(key, topicKey) < 0.9;
+    if (!key || usedTitles.has(key) || key === topicKey || calculateTextSimilarity(key, topicKey) >= 0.9) return false;
+    // In a Chinese book, do not use purely Latin site names (like "Singapore Chinese Cultural Centre" or "Chapter 1") as chapter headings
+    if (isChineseTopic && /^[a-zA-Z0-9\s.,'()\-–—&]+$/.test(title) && !/[\u3400-\u9fff]/.test(title)) {
+      return false;
+    }
+    return true;
   };
 
   for (const url of ranked) {
@@ -1322,7 +1371,7 @@ export function deriveChapterTitle(
 
   const lead = leadSentenceTitle(units[0].text);
   if (lead && acceptable(lead)) return lead;
-  return `${clipLabelAtWordBoundary(topic, 60)} · ${index + 1}`;
+  return isChineseTopic ? `${clipLabelAtWordBoundary(topic, 60)} · 第${index + 1}章` : `${clipLabelAtWordBoundary(topic, 60)} · ${index + 1}`;
 }
 
 /**
@@ -1862,7 +1911,7 @@ async function assembleWebBookCore(
             required: ["topic", "outline"]
           }
         }
-      }, preferredModel);
+      }, preferredModel, { maxModels: OUTLINE_FULL_MAX_MODELS });
 
       trackModel(outlineResponse);
       const outlineData = parseJsonObject(outlineResponse.text);

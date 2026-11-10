@@ -29,5 +29,17 @@ export async function loadExportLibrary<T>(name: string, load: () => Promise<T>,
       if (attempt < retries) await sleep(pauseMs * (attempt + 1));
     }
   }
+
+  // If the page was open while Vite refreshed its pre-bundled deps, the module specifier's URL in the
+  // browser may be stale or cached as rejected. In Vite dev mode, fetch a fresh module directly.
+  if (typeof window !== 'undefined' && typeof document !== 'undefined' && Boolean((import.meta as any)?.env?.DEV)) {
+    try {
+      const dynamicImport = new Function('u', 'return import(u)');
+      return await dynamicImport(`/node_modules/.vite/deps/${name}.js?t=${Date.now()}`);
+    } catch {
+      /* fall through to throw ExportLibraryLoadError */
+    }
+  }
+
   throw new ExportLibraryLoadError(name, lastError);
 }
