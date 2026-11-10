@@ -1148,7 +1148,7 @@ const EVIDENCE_OUTLINE_MIN_SOURCES = 2;
 const CHAPTER_TITLE_MAX_CHARS = 80;
 // Titles that name a website or a page type, not what the page is about.
 const GENERIC_TITLE_PATTERN = /^(?:home(?:page)?|index|untitled|welcome|main page|about(?: us)?|contact(?: us)?|login|sign in|facebook|instagram|twitter|youtube|scribd|wikipedia(?:[,\s].*)?|[维維]基百科(?:[，,\s].*)?|自由的百科全[书書]|search results?|page \d+|overview|introduction|menu|navigation|sitemap|gallery|downloads?|news|events?|焦点|文告|专题|头条|要闻|评论|社论|特写|专栏|访谈|focus|opinion|editorial|无标题|首页|主页|欢迎|联系我们|联络我们|聯繫我們|联系方式|关于我们|關於我們|关于|简介|概述|新闻|最新消息|活动|hubungi kami|tentang kami|laman utama|utama)$/i;
-const TITLE_SEPARATOR = /\s+(?:[-|–—·•:]{1,2}|::)\s+|\s*[|｜]\s*/;
+const TITLE_SEPARATOR = /\s+(?:[-|–—·•:=]{1,2}|::)\s+|\s*[|｜]\s*/;
 
 function normalizeTitleKey(title: string): string {
   return title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -1158,6 +1158,8 @@ function normalizeTitleKey(title: string): string {
 export function cleanSourceTitle(rawTitle: string, url = ''): string {
   const host = (() => { try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; } })();
   const hostLabel = host.split('.')[0] || '';
+  // Search engines clip long titles ("Singapore Chinese Cultural Cen..."); the clipped last segment is not a heading.
+  const truncated = /(?:\.{3}|…)\s*$/.test(String(rawTitle).trim());
   const segments = sanitizeNarrativeText(rawTitle)
     .replace(/\s+/g, ' ')
     .replace(CHAPTER_NUMBER_PREFIX, '')
@@ -1171,6 +1173,7 @@ export function cleanSourceTitle(rawTitle: string, url = ''): string {
     return GENERIC_TITLE_PATTERN.test(segment.trim()) || (hostLabel.length > 2 && (key === hostLabel || key === host.replace(/\./g, '')));
   };
   const candidates = segments.filter(segment => !isSiteName(segment) && /[\p{L}\p{N}]/u.test(segment));
+  if (truncated && (candidates.length > 1 || !/[\u3400-\u9fff]/.test(candidates[0] || ''))) candidates.pop();
   const first = candidates[0] || '';
   const longest = candidates.reduce((best, segment) => (segment.length > best.length ? segment : best), '');
   // "文告 | <headline>": a short section label in front of the real headline is not the title.
@@ -1268,7 +1271,10 @@ export function buildEvidenceOutline(
   const topicKey = normalizeTitleKey(topic);
   const acceptable = (title: string) => {
     const key = normalizeTitleKey(title);
-    return Boolean(key) && !usedTitles.has(key) && key !== topicKey && calculateTextSimilarity(key, topicKey) < 0.9;
+    if (!key || usedTitles.has(key) || key === topicKey || calculateTextSimilarity(key, topicKey) >= 0.9) return false;
+    // A purely Latin heading (site or English page name) is not a chapter title in a Chinese book.
+    if (/[\u3400-\u9fff]/.test(topic) && !/[\u3400-\u9fff]/.test(title) && /^[\x00-\x7f\s]+$/.test(title)) return false;
+    return true;
   };
 
   // 1. Cleaned source titles
