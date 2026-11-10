@@ -1128,9 +1128,10 @@ export async function evolve(
 }
 
 const FALLBACK_MAX_CHAPTERS = 6;
+export const COMPACT_OUTLINE_CHAPTER_COUNT = 6;
 const CHAPTER_TITLE_MAX_CHARS = 80;
 // Titles that name a website or a page type, not what the page is about.
-const GENERIC_TITLE_PATTERN = /^(?:home(?:page)?|index|untitled|welcome|main page|about(?: us)?|contact(?: us)?|login|sign in|facebook|instagram|twitter|youtube|scribd|wikipedia|search results?|page \d+|overview|introduction|menu|navigation|sitemap|gallery|downloads?|news|events?|焦点|文告|专题|头条|要闻|评论|社论|特写|专栏|访谈|focus|opinion|editorial|无标题|首页|主页|欢迎|联系我们|联络我们|聯繫我們|联系方式|关于我们|關於我們|关于|简介|概述|新闻|最新消息|活动|hubungi kami|tentang kami|laman utama|utama)$/i;
+const GENERIC_TITLE_PATTERN = /^(?:home(?:page)?|index|untitled|welcome|main page|about(?: us)?|contact(?: us)?|login|sign in|facebook|instagram|twitter|youtube|scribd|wikipedia(?:[,\s].*)?|维基百科(?:[，,\s].*)?|自由的百科全书|search results?|page \d+|overview|introduction|menu|navigation|sitemap|gallery|downloads?|news|events?|焦点|文告|专题|头条|要闻|评论|社论|特写|专栏|访谈|focus|opinion|editorial|无标题|首页|主页|欢迎|联系我们|联络我们|聯繫我們|联系方式|关于我们|關於我們|关于|简介|概述|新闻|最新消息|活动|hubungi kami|tentang kami|laman utama|utama)$/i;
 const TITLE_SEPARATOR = /\s+(?:[-|–—·•:]{1,2}|::)\s+|\s*[|｜]\s*/;
 
 function normalizeTitleKey(title: string): string {
@@ -1175,6 +1176,129 @@ export function leadSentenceTitle(sentence: string): string {
   const clause = text.split(/[,;，；、:：]/)[0].trim();
   const base = clause.length >= minClause ? clause : text;
   return clipLabelAtWordBoundary(base, cjk ? 24 : 60).replace(/…$/, '').replace(/[\s,;:，；：、-]+$/, '').trim();
+}
+
+/**
+ * Drops truncated stubs and dangling fragments (e.g. trailing "S" after "...decline in xinyao.")
+ * so they are not spliced into the next sentence.
+ */
+export function isClippedStub(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  const letters = trimmed.replace(/[^\p{L}\p{N}]/gu, '');
+  if (letters.length === 0) return true;
+  // Non-CJK stubs: 1 or 2 letters like "S", "S.", "th", or very short fragments without punctuation
+  if (!/[\u3400-\u9fff]/.test(trimmed)) {
+    if (letters.length <= 2) return true;
+    if (trimmed.length < 4 && !/[.!?]$/.test(trimmed)) return true;
+  } else {
+    // For CJK: a single character (like "的" or "一") without terminal punctuation
+    if (letters.length <= 1) return true;
+  }
+  return false;
+}
+
+/**
+ * Builds an outline in code from cleaned source titles and evidence when model-based outline calls fail.
+ * Chapters are later expanded by the model from this outline.
+ */
+export function buildEvidenceOutline(
+  topic: string,
+  pages: WebPageGenotype[]
+): Array<{
+  title: string;
+  focus: string;
+  terms: string[];
+  subTopicTitles: string[];
+  visualSeed: string;
+}> {
+  const usedTitles = new Set<string>();
+  const outline: Array<{
+    title: string;
+    focus: string;
+    terms: string[];
+    subTopicTitles: string[];
+    visualSeed: string;
+  }> = [];
+
+  const topicKey = normalizeTitleKey(topic);
+  const acceptable = (title: string) => {
+    const key = normalizeTitleKey(title);
+    return Boolean(key) && !usedTitles.has(key) && key !== topicKey && calculateTextSimilarity(key, topicKey) < 0.9;
+  };
+
+  // 1. Cleaned source titles
+  for (const page of pages) {
+    if (outline.length >= COMPACT_OUTLINE_CHAPTER_COUNT) break;
+    const cleanTitle = cleanSourceTitle(page.title || '', page.url || '');
+    if (!cleanTitle || !acceptable(cleanTitle)) continue;
+
+    usedTitles.add(normalizeTitleKey(cleanTitle));
+    const pageDefs = (page.definitions || [])
+      .map((d) => cleanTermLabel(d.term))
+      .filter((t) => t && t.length > 1 && !t.includes('{'));
+    const terms = pageDefs.slice(0, 4);
+
+    const pageSubTopics = (page.subTopics || [])
+      .map((s) => cleanTermLabel(s.title))
+      .filter((t) => t && t.length > 1 && !t.includes('{'));
+    const subTopicTitles = pageSubTopics.slice(0, 3);
+
+    const focus = `In-depth analysis of ${cleanTitle} in relation to ${topic}, covering key concepts, foundational context, and practical dimensions.`;
+
+    outline.push({
+      title: cleanTitle,
+      focus,
+      terms: terms.length > 0 ? terms : [cleanTitle, topic],
+      subTopicTitles: subTopicTitles.length > 0 ? subTopicTitles : [cleanTitle],
+      visualSeed: `${topic} ${cleanTitle}`,
+    });
+  }
+
+  // 2. Supplement from subtopics if fewer than 6
+  if (outline.length < COMPACT_OUTLINE_CHAPTER_COUNT) {
+    for (const page of pages) {
+      if (outline.length >= COMPACT_OUTLINE_CHAPTER_COUNT) break;
+      for (const sub of page.subTopics || []) {
+        if (outline.length >= COMPACT_OUTLINE_CHAPTER_COUNT) break;
+        const subTitle = cleanTermLabel(sub.title);
+        if (subTitle && acceptable(subTitle) && subTitle.length >= 3) {
+          usedTitles.add(normalizeTitleKey(subTitle));
+          outline.push({
+            title: subTitle,
+            focus: sub.summary || `Exploration of ${subTitle} within ${topic}.`,
+            terms: [subTitle, topic],
+            subTopicTitles: [subTitle],
+            visualSeed: `${topic} ${subTitle}`,
+          });
+        }
+      }
+    }
+  }
+
+  // 3. Supplement from lead sentences if fewer than 4
+  if (outline.length < 4) {
+    for (const page of pages) {
+      if (outline.length >= COMPACT_OUTLINE_CHAPTER_COUNT) break;
+      const sentences = splitIntoSentences(sanitizeNarrativeText(page.content));
+      for (const sentence of sentences) {
+        if (outline.length >= COMPACT_OUTLINE_CHAPTER_COUNT) break;
+        const lead = leadSentenceTitle(sentence);
+        if (lead && acceptable(lead)) {
+          usedTitles.add(normalizeTitleKey(lead));
+          outline.push({
+            title: lead,
+            focus: `Investigation into ${lead} in the context of ${topic}.`,
+            terms: [lead, topic],
+            subTopicTitles: [lead],
+            visualSeed: `${topic} ${lead}`,
+          });
+        }
+      }
+    }
+  }
+
+  return outline;
 }
 
 /**
@@ -1312,15 +1436,34 @@ export function synthesizeFallbackWebBook(
   const gatheredEvidence: FallbackEvidenceUnit[] = [];
   rankedPool.forEach(({ page, tier }) => {
     splitIntoSentences(normalizeCjkSpacing(stripSnippetSplices(sanitizeNarrativeText(page.content)))).forEach(text => {
-      if (isPageChromeText(text) || isBibliographicCitation(text)) return;
+      if (isPageChromeText(text) || isBibliographicCitation(text) || isClippedStub(text)) return;
       if (!gatheredEvidence.some(kept => calculateTextSimilarity(kept.text, text) >= 0.88)) {
         gatheredEvidence.push({ text, url: page.url, tier });
       }
     });
   });
-  const reliableEvidence = gatheredEvidence.filter(unit => unit.tier !== 'low');
-  const evidence = reliableEvidence.length >= FALLBACK_MIN_RELIABLE_SENTENCES ? reliableEvidence : gatheredEvidence;
-  const droppedLowReliability = gatheredEvidence.length - evidence.length;
+
+  // In a Chinese-topic book, mostly-Latin sentences (e.g. English Wikipedia paragraphs) are left out.
+  // If doing so would leave fewer than four sentences, the English evidence is kept so the book isn't empty.
+  const isChineseTopic = /[\u3400-\u9fff]/.test(topic);
+  let evidencePool = gatheredEvidence;
+  let droppedNonChinese = 0;
+  if (isChineseTopic) {
+    const isMostlyLatin = (text: string) => {
+      const cjk = (text.match(/[\u3400-\u9fff]/g) || []).length;
+      const latin = (text.match(/[a-zA-Z]/g) || []).length;
+      return latin > 0 && (cjk === 0 || latin > cjk * 2);
+    };
+    const chineseEvidence = gatheredEvidence.filter((unit) => !isMostlyLatin(unit.text));
+    if (chineseEvidence.length >= FALLBACK_MIN_SENTENCES_PER_CHAPTER) {
+      droppedNonChinese = gatheredEvidence.length - chineseEvidence.length;
+      evidencePool = chineseEvidence;
+    }
+  }
+
+  const reliableEvidence = evidencePool.filter(unit => unit.tier !== 'low');
+  const evidence = reliableEvidence.length >= FALLBACK_MIN_RELIABLE_SENTENCES ? reliableEvidence : evidencePool;
+  const droppedLowReliability = evidencePool.length - evidence.length;
 
   // Definitions and sub-topics go to the chapter that uses their own source, and each is placed once.
   const unplacedDefinitions = new Set(getRenderableDefinitions(pool.flatMap(page => page.definitions || [])));
@@ -1396,6 +1539,7 @@ export function synthesizeFallbackWebBook(
     generationNote: [
       searchResult?.generationNote || 'Synthesized via resilient multi-source evolutionary engine.',
       `Compiled offline from ${new Set(evidence.map(unit => unit.url)).size} sources (${evidence.length} sentences, ${evidenceWords} words)` +
+        `${droppedNonChinese > 0 ? `; ${droppedNonChinese} non-Chinese sentence${droppedNonChinese === 1 ? '' : 's'} were left out` : ''}` +
         `${droppedLowReliability > 0 ? `; ${droppedLowReliability} sentences from low-reliability sites were left out` : ''}.`,
     ].join(' '),
     fallbackSource: searchResult?.fallbackSource,
@@ -1685,53 +1829,135 @@ async function assembleWebBookCore(
   };
 
   try {
+    let outline: any[] = [];
+    let outlineTopic = topic;
+    let outlinePathNote = '';
+
     // Stage 1: Generate detailed 10-chapter outline
-    const outlineResponse = await generateWithModelFallback({
-      contents: `Topic: ${topic}.
-      ${evidenceLabel}:
-      ${evidenceDigest}
+    try {
+      const outlineResponse = await generateWithModelFallback({
+        contents: `Topic: ${topic}.
+        ${evidenceLabel}:
+        ${evidenceDigest}
 
-      Create a detailed outline of exactly ${BOOK_CHAPTER_COUNT} chapters (no more, no fewer; no separate conclusion or epilogue chapter beyond them) for a comprehensive, full-length Web-book. 
-      For each chapter, provide:
-      1. A compelling title.
-      2. A brief 2-sentence focus description.
-      3. 4 key terms to define.
-      4. 3 sub-topics to explore.
-      5. A short visual-concept caption for an image, written in the same language as the topic and the chapter titles (never English for a non-English book).
-      Make the chapters cover different ground so that no chapter repeats another. Write titles without chapter numbers.`,
-      config: {
-        systemInstruction: "You are a master book architect. Output valid JSON only. Create an outline of exactly 10 chapters that flows logically from introduction to advanced concepts and future outlook. Ensure all terms and sub-topics are meaningful and relevant to the topic. Strictly avoid placeholders, random strings, or meaningless identifiers.",
-        responseMimeType: "application/json",
-        maxOutputTokens: 8192,
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            topic: { type: Type.STRING },
-            outline: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  focus: { type: Type.STRING },
-                  terms: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  subTopicTitles: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  visualSeed: { type: Type.STRING }
-                },
-                required: ["title", "focus", "terms", "subTopicTitles", "visualSeed"]
+        Create a detailed outline of exactly ${BOOK_CHAPTER_COUNT} chapters (no more, no fewer; no separate conclusion or epilogue chapter beyond them) for a comprehensive, full-length Web-book. 
+        For each chapter, provide:
+        1. A compelling title.
+        2. A brief 2-sentence focus description.
+        3. 4 key terms to define.
+        4. 3 sub-topics to explore.
+        5. A short visual-concept caption for an image, written in the same language as the topic and the chapter titles (never English for a non-English book).
+        Make the chapters cover different ground so that no chapter repeats another. Write titles without chapter numbers.`,
+        config: {
+          systemInstruction: "You are a master book architect. Output valid JSON only. Create an outline of exactly 10 chapters that flows logically from introduction to advanced concepts and future outlook. Ensure all terms and sub-topics are meaningful and relevant to the topic. Strictly avoid placeholders, random strings, or meaningless identifiers.",
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              topic: { type: Type.STRING },
+              outline: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    focus: { type: Type.STRING },
+                    terms: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    subTopicTitles: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    visualSeed: { type: Type.STRING }
+                  },
+                  required: ["title", "focus", "terms", "subTopicTitles", "visualSeed"]
+                }
               }
-            }
-          },
-          required: ["topic", "outline"]
+            },
+            required: ["topic", "outline"]
+          }
         }
+      }, preferredModel);
+
+      trackModel(outlineResponse);
+      const outlineData = parseJsonObject(outlineResponse.text);
+      if (outlineData && Array.isArray(outlineData.outline) && outlineData.outline.length > 0) {
+        outline = outlineData.outline.slice(0, BOOK_CHAPTER_COUNT);
+        if (outlineData.topic) outlineTopic = outlineData.topic;
       }
-    }, preferredModel);
+    } catch (primaryOutlineErr) {
+      if (NON_RECOVERABLE_GEMINI_REASONS.has(detectGeminiFailureReason(primaryOutlineErr))) {
+        throw primaryOutlineErr;
+      }
+      console.warn("Primary 10-chapter outline request failed, attempting compact 6-chapter retry...", primaryOutlineErr);
+    }
 
-    trackModel(outlineResponse);
-    const outlineData = parseJsonObject(outlineResponse.text);
+    // If 10-chapter outline failed or was empty, retry with 6-chapter compact outline
+    if (outline.length === 0) {
+      try {
+        const compactOutlineResponse = await generateWithModelFallback({
+          contents: `Topic: ${topic}.
+          ${evidenceLabel}:
+          ${evidenceDigest}
 
-    if (outlineData && Array.isArray(outlineData.outline) && outlineData.outline.length > 0) {
-      const outline: any[] = outlineData.outline.slice(0, BOOK_CHAPTER_COUNT);
+          Create a detailed outline of exactly ${COMPACT_OUTLINE_CHAPTER_COUNT} chapters (no more, no fewer; no separate conclusion or epilogue chapter beyond them) for a comprehensive, full-length Web-book.
+          For each chapter, provide:
+          1. A compelling title.
+          2. A brief 2-sentence focus description.
+          3. 4 key terms to define.
+          4. 3 sub-topics to explore.
+          5. A short visual-concept caption for an image, written in the same language as the topic and the chapter titles (never English for a non-English book).
+          Make the chapters cover different ground so that no chapter repeats another. Write titles without chapter numbers.`,
+          config: {
+            systemInstruction: `You are a master book architect. Output valid JSON only. Create an outline of exactly ${COMPACT_OUTLINE_CHAPTER_COUNT} chapters that flows logically from introduction to advanced concepts and future outlook. Ensure all terms and sub-topics are meaningful and relevant to the topic. Strictly avoid placeholders, random strings, or meaningless identifiers.`,
+            responseMimeType: "application/json",
+            maxOutputTokens: 4096,
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                topic: { type: Type.STRING },
+                outline: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      focus: { type: Type.STRING },
+                      terms: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      subTopicTitles: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      visualSeed: { type: Type.STRING }
+                    },
+                    required: ["title", "focus", "terms", "subTopicTitles", "visualSeed"]
+                  }
+                }
+              },
+              required: ["topic", "outline"]
+            }
+          }
+        }, preferredModel);
+
+        trackModel(compactOutlineResponse);
+        const compactOutlineData = parseJsonObject(compactOutlineResponse.text);
+        if (compactOutlineData && Array.isArray(compactOutlineData.outline) && compactOutlineData.outline.length > 0) {
+          outline = compactOutlineData.outline.slice(0, COMPACT_OUTLINE_CHAPTER_COUNT);
+          if (compactOutlineData.topic) outlineTopic = compactOutlineData.topic;
+          outlinePathNote = 'Outline generated via 6-chapter retry.';
+        }
+      } catch (compactOutlineErr) {
+        if (NON_RECOVERABLE_GEMINI_REASONS.has(detectGeminiFailureReason(compactOutlineErr))) {
+          throw compactOutlineErr;
+        }
+        console.warn("Compact 6-chapter outline request failed, attempting evidence-derived outline...", compactOutlineErr);
+      }
+    }
+
+    // If 6-chapter outline also failed or was empty, build outline from evidence titles
+    if (outline.length === 0) {
+      const evidenceOutline = buildEvidenceOutline(topic, assemblyPages);
+      if (evidenceOutline.length > 0) {
+        outline = evidenceOutline;
+        outlinePathNote = 'Outline derived from gathered sources.';
+      }
+    }
+
+    if (outline.length > 0) {
       const outlineTitles = outline.map((entry, index) => `${index + 1}. ${entry?.title}`).join('\n');
 
       // Stage 2: chapter expansion, a few requests at a time, each written from the gathered evidence.
@@ -1850,13 +2076,16 @@ async function assembleWebBookCore(
           partialNote = ` ${chapters.length} of ${outline.length} chapters were written; ${missing.length} could not be generated (${GEMINI_SEARCH_CAUSE_PHRASES[cause]}) and are left out rather than padded: ${titles}${missing.length > 3 ? ', ...' : ''}.${retryHint}`;
         }
 
+        const outlineNotePart = outlinePathNote ? ` ${outlinePathNote}` : '';
         return {
           id: `book-${Date.now()}`,
-          topic: outlineData.topic || topic,
+          topic: outlineTopic || topic,
           timestamp: Date.now(),
           chapters,
           sourceMode: searchResult?.sourceMode || 'gemini',
-          generationNote: appendFailoverNote(`${searchResult?.generationNote || 'Assembled via 2-stage evolutionary architecture.'}${partialNote}`),
+          generationNote: appendFailoverNote(
+            `${searchResult?.generationNote || 'Assembled via 2-stage evolutionary architecture.'}${outlineNotePart}${partialNote}`
+          ),
           fallbackSource: searchResult?.fallbackSource,
           fallbackReason: searchResult?.fallbackReason,
         };
