@@ -1129,9 +1129,10 @@ export async function evolve(
 
 const FALLBACK_MAX_CHAPTERS = 6;
 export const COMPACT_OUTLINE_CHAPTER_COUNT = 6;
+const EVIDENCE_OUTLINE_MIN_SOURCES = 2;
 const CHAPTER_TITLE_MAX_CHARS = 80;
 // Titles that name a website or a page type, not what the page is about.
-const GENERIC_TITLE_PATTERN = /^(?:home(?:page)?|index|untitled|welcome|main page|about(?: us)?|contact(?: us)?|login|sign in|facebook|instagram|twitter|youtube|scribd|wikipedia(?:[,\s].*)?|维基百科(?:[，,\s].*)?|自由的百科全书|search results?|page \d+|overview|introduction|menu|navigation|sitemap|gallery|downloads?|news|events?|焦点|文告|专题|头条|要闻|评论|社论|特写|专栏|访谈|focus|opinion|editorial|无标题|首页|主页|欢迎|联系我们|联络我们|聯繫我們|联系方式|关于我们|關於我們|关于|简介|概述|新闻|最新消息|活动|hubungi kami|tentang kami|laman utama|utama)$/i;
+const GENERIC_TITLE_PATTERN = /^(?:home(?:page)?|index|untitled|welcome|main page|about(?: us)?|contact(?: us)?|login|sign in|facebook|instagram|twitter|youtube|scribd|wikipedia(?:[,\s].*)?|[维維]基百科(?:[，,\s].*)?|自由的百科全[书書]|search results?|page \d+|overview|introduction|menu|navigation|sitemap|gallery|downloads?|news|events?|焦点|文告|专题|头条|要闻|评论|社论|特写|专栏|访谈|focus|opinion|editorial|无标题|首页|主页|欢迎|联系我们|联络我们|聯繫我們|联系方式|关于我们|關於我們|关于|简介|概述|新闻|最新消息|活动|hubungi kami|tentang kami|laman utama|utama)$/i;
 const TITLE_SEPARATOR = /\s+(?:[-|–—·•:]{1,2}|::)\s+|\s*[|｜]\s*/;
 
 function normalizeTitleKey(title: string): string {
@@ -1244,16 +1245,22 @@ export function buildEvidenceOutline(
       .filter((t) => t && t.length > 1 && !t.includes('{'));
     const subTopicTitles = pageSubTopics.slice(0, 3);
 
-    const focus = `In-depth analysis of ${cleanTitle} in relation to ${topic}, covering key concepts, foundational context, and practical dimensions.`;
+    // The page's own first full sentence says what the chapter is about, in the language of the evidence.
+    const leadSentence = splitIntoSentences(normalizeCjkSpacing(stripSnippetSplices(sanitizeNarrativeText(page.content || ''))))
+      .find((sentence) => !isClippedStub(sentence));
+    const focus = leadSentence ? clipLabelAtWordBoundary(leadSentence, 200) : cleanTitle;
 
     outline.push({
       title: cleanTitle,
       focus,
-      terms: terms.length > 0 ? terms : [cleanTitle, topic],
-      subTopicTitles: subTopicTitles.length > 0 ? subTopicTitles : [cleanTitle],
+      terms,
+      subTopicTitles,
       visualSeed: `${topic} ${cleanTitle}`,
     });
   }
+
+  // One usable source is not an outline: its subtopics would become "chapters" of a single page.
+  if (outline.length < EVIDENCE_OUTLINE_MIN_SOURCES) return [];
 
   // 2. Supplement from subtopics if fewer than 6
   if (outline.length < COMPACT_OUTLINE_CHAPTER_COUNT) {
@@ -1266,32 +1273,10 @@ export function buildEvidenceOutline(
           usedTitles.add(normalizeTitleKey(subTitle));
           outline.push({
             title: subTitle,
-            focus: sub.summary || `Exploration of ${subTitle} within ${topic}.`,
-            terms: [subTitle, topic],
+            focus: sub.summary || subTitle,
+            terms: [subTitle],
             subTopicTitles: [subTitle],
             visualSeed: `${topic} ${subTitle}`,
-          });
-        }
-      }
-    }
-  }
-
-  // 3. Supplement from lead sentences if fewer than 4
-  if (outline.length < 4) {
-    for (const page of pages) {
-      if (outline.length >= COMPACT_OUTLINE_CHAPTER_COUNT) break;
-      const sentences = splitIntoSentences(sanitizeNarrativeText(page.content));
-      for (const sentence of sentences) {
-        if (outline.length >= COMPACT_OUTLINE_CHAPTER_COUNT) break;
-        const lead = leadSentenceTitle(sentence);
-        if (lead && acceptable(lead)) {
-          usedTitles.add(normalizeTitleKey(lead));
-          outline.push({
-            title: lead,
-            focus: `Investigation into ${lead} in the context of ${topic}.`,
-            terms: [lead, topic],
-            subTopicTitles: [lead],
-            visualSeed: `${topic} ${lead}`,
           });
         }
       }
@@ -1445,14 +1430,16 @@ export function synthesizeFallbackWebBook(
 
   // In a Chinese-topic book, mostly-Latin sentences (e.g. English Wikipedia paragraphs) are left out.
   // If doing so would leave fewer than four sentences, the English evidence is kept so the book isn't empty.
-  const isChineseTopic = /[\u3400-\u9fff]/.test(topic);
+  const topicCjk = (topic.match(/[\u3400-\u9fff]/g) || []).length;
+  const topicLatin = (topic.match(/[a-zA-Z]/g) || []).length;
+  const isChineseTopic = topicCjk > 0 && topicCjk / (topicCjk + topicLatin) >= 0.3;
   let evidencePool = gatheredEvidence;
   let droppedNonChinese = 0;
   if (isChineseTopic) {
     const isMostlyLatin = (text: string) => {
       const cjk = (text.match(/[\u3400-\u9fff]/g) || []).length;
       const latin = (text.match(/[a-zA-Z]/g) || []).length;
-      return latin > 0 && (cjk === 0 || latin > cjk * 2);
+      return latin >= 20 && cjk / (cjk + latin) < 0.2;
     };
     const chineseEvidence = gatheredEvidence.filter((unit) => !isMostlyLatin(unit.text));
     if (chineseEvidence.length >= FALLBACK_MIN_SENTENCES_PER_CHAPTER) {
@@ -1832,6 +1819,7 @@ async function assembleWebBookCore(
     let outline: any[] = [];
     let outlineTopic = topic;
     let outlinePathNote = '';
+    let outlineError: unknown = null;
 
     // Stage 1: Generate detailed 10-chapter outline
     try {
@@ -1883,6 +1871,7 @@ async function assembleWebBookCore(
         if (outlineData.topic) outlineTopic = outlineData.topic;
       }
     } catch (primaryOutlineErr) {
+      outlineError = primaryOutlineErr;
       if (NON_RECOVERABLE_GEMINI_REASONS.has(detectGeminiFailureReason(primaryOutlineErr))) {
         throw primaryOutlineErr;
       }
@@ -1941,6 +1930,7 @@ async function assembleWebBookCore(
           outlinePathNote = 'Outline generated via 6-chapter retry.';
         }
       } catch (compactOutlineErr) {
+        outlineError = compactOutlineErr;
         if (NON_RECOVERABLE_GEMINI_REASONS.has(detectGeminiFailureReason(compactOutlineErr))) {
           throw compactOutlineErr;
         }
@@ -2094,7 +2084,7 @@ async function assembleWebBookCore(
       const firstFailure = results.find((result): result is { status: 'failed'; error: unknown } => result.status === 'failed');
       assemblyFailure = firstFailure?.error ?? new SyntaxError('Gemini returned no chapters');
     } else {
-      assemblyFailure = new SyntaxError('Gemini returned an empty book outline');
+      assemblyFailure = outlineError ?? new SyntaxError('Gemini returned an empty book outline');
     }
   } catch (err) {
     console.warn("AI outline / chapter expansion failed, falling back to resilient synthesis...", err);
