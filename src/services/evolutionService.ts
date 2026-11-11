@@ -1180,7 +1180,31 @@ export function cleanSourceTitle(rawTitle: string, url = ''): string {
   const shortLimit = /[\u3400-\u9fff]/.test(first) ? 6 : 14;
   const chosen = first && first.length < shortLimit && longest.length >= first.length * 2 ? longest : first;
   if (!chosen || /^[a-z0-9_-]+\.[a-z]{2,}$/i.test(chosen)) return '';
-  return clipLabelAtWordBoundary(chosen, CHAPTER_TITLE_MAX_CHARS).replace(/[\s,;:，；：、-]+$/, '').trim();
+  return clipLabelAtWordBoundary(stripGluedSiteName(chosen, hostLabel), CHAPTER_TITLE_MAX_CHARS).replace(/[\s,;:，；：、-]+$/, '').trim();
+}
+
+/**
+ * A site name stuck to the end of a headline without a separator: "…为何这次获准？8world" (the site's own label right after
+ * Chinese or sentence punctuation) and "…剩余刑期_凤凰网" (an underscore and a short Chinese brand). Never cuts a Latin title
+ * such as "Latest news" or "my_file_name", and never leaves fewer than six characters.
+ */
+function stripGluedSiteName(title: string, hostLabel: string): string {
+  let result = title;
+  if (hostLabel.length > 2) {
+    const label = hostLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const stripped = result.replace(new RegExp(`(?<=[\\u3400-\\u9fff\\u3000-\\u303f\\uff00-\\uffef!?.])\\s*${label}$`, 'i'), '');
+    if (stripped.length >= 6) result = stripped;
+  }
+  const brand = result.match(/^(.{6,})_[\u3400-\u9fff][\u3400-\u9fffA-Za-z0-9]{0,7}$/);
+  return brand ? brand[1] : result;
+}
+
+/** "<title>（续）", "<title>（续2）" / "<title> (continued)": the heading of a chapter that carries on from a source already used. */
+export function continuationTitle(base: string, part: number): string {
+  if (!/[\u3400-\u9fff]/.test(base)) return `${base} (continued${part > 2 ? ` ${part - 1}` : ''})`;
+  const word = /[這個們來說對為與學從時間謠樂傳國際華義後會點開發過還應該並樣]/.test(base) ? '續' : '续';
+  const mark = part > 2 ? `${word}${part - 1}` : word;
+  return /[）)]$/.test(base) ? `${base} · ${mark}` : `${base}（${mark}）`;
 }
 
 // Sentence-opening connectives that make a clipped sentence read as the middle of a thought.
@@ -1352,15 +1376,27 @@ export function deriveChapterTitle(
   const ranked = [...counts.entries()].sort((x, y) => y[1] - x[1]).map(([url]) => url);
   const topicKey = normalizeTitleKey(topic);
   const isChineseTopic = (topic.match(/[\u3400-\u9fff]/g) || []).length > 0;
-  const acceptable = (title: string) => {
+  const acceptable = (title: string, allowUsed = false) => {
     const key = normalizeTitleKey(title);
-    if (!key || usedTitles.has(key) || key === topicKey || calculateTextSimilarity(key, topicKey) >= 0.9) return false;
+    if (!key || (!allowUsed && usedTitles.has(key)) || key === topicKey || calculateTextSimilarity(key, topicKey) >= 0.9) return false;
     // In a Chinese book, do not use purely Latin site names (like "Singapore Chinese Cultural Centre" or "Chapter 1") as chapter headings
     if (isChineseTopic && /^[a-zA-Z0-9\s.,'()\-–—&]+$/.test(title) && !/[\u3400-\u9fff]/.test(title)) {
       return false;
     }
     return true;
   };
+
+  // Most of this chapter comes from a source whose heading an earlier chapter already carries: it is that source going on,
+  // not a new subject, and a clause cut out of its own body ("在这些媒介的帮助下") makes a poor heading.
+  if (units.length > 0 && (counts.get(ranked[0]) || 0) / units.length >= 0.6) {
+    const dominant = cleanSourceTitle(titleByUrl.get(ranked[0]) || '', ranked[0]);
+    if (dominant && usedTitles.has(normalizeTitleKey(dominant)) && acceptable(dominant, true)) {
+      for (let part = 2; part < 20; part += 1) {
+        const candidate = continuationTitle(dominant, part);
+        if (!usedTitles.has(normalizeTitleKey(candidate))) return candidate;
+      }
+    }
+  }
 
   for (const url of ranked) {
     const title = cleanSourceTitle(titleByUrl.get(url) || '', url);
