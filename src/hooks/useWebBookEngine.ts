@@ -81,6 +81,19 @@ export function useWebBookEngine() {
     return local.length > 0 ? (local[0].generationNote || null) : null;
   });
 
+  // History item being browsed while a generation keeps running in the background.
+  // The live run state (state/query/notice/error) is never touched while this is set.
+  const [viewingItem, setViewingItemState] = useState<WebBook | null>(null);
+  const viewingItemRef = useRef<WebBook | null>(null);
+  const [runTopic, setRunTopic] = useState<string>('');
+  // Outcome of a run that finished while the user was away browsing history.
+  const [backgroundOutcome, setBackgroundOutcome] = useState<'complete' | 'failed' | null>(null);
+
+  const setViewingItem = (item: WebBook | null) => {
+    viewingItemRef.current = item;
+    setViewingItemState(item);
+  };
+
   const [fallbackMode, setFallbackMode] = useState<SearchFallbackMode>('google_duckduckgo');
   const [geminiModel, setGeminiModel] = useState<EngineOptions['geminiModel']>('gemini-3.6-flash');
 
@@ -131,6 +144,9 @@ export function useWebBookEngine() {
 
   const startNewSearch = () => {
     beginRun();
+    setViewingItem(null);
+    setBackgroundOutcome(null);
+    setRunTopic('');
     setQuery('');
     setWebBook(null);
     setError(null);
@@ -142,6 +158,9 @@ export function useWebBookEngine() {
     const trimmedQuery = query.trim();
     if (!trimmedQuery) return;
     const runId = beginRun();
+    setViewingItem(null);
+    setBackgroundOutcome(null);
+    setRunTopic(trimmedQuery);
 
     const ensureActiveRun = () => {
       if (!isActiveRun(runId)) {
@@ -231,6 +250,9 @@ export function useWebBookEngine() {
       setWebBook(book);
       setNotice(book.generationNote || searchResult.generationNote || null);
       setHistory((previousHistory) => mergeHistoryBooks([book], previousHistory));
+      if (viewingItemRef.current) {
+        setBackgroundOutcome('complete');
+      }
 
       void completePersistedSearch(persistedSearchId, trimmedQuery, book).catch((persistenceError) => {
         console.error('Failed to persist completed WebBook', persistenceError);
@@ -282,10 +304,28 @@ export function useWebBookEngine() {
       setError(message);
       setNotice(null);
       setState(INITIAL_STATE);
+      if (viewingItemRef.current) {
+        setBackgroundOutcome('failed');
+      }
     }
   };
 
+  const isRunInProgress =
+    state.status === 'searching' || state.status === 'evolving' || state.status === 'assembling' || state.status === 'parsing';
+
+  const returnToRun = () => {
+    setViewingItem(null);
+    setBackgroundOutcome(null);
+  };
+
   const viewHistoryItem = (item: WebBook) => {
+    if (isRunInProgress) {
+      // Browse the archived book without disturbing the generation that is still running.
+      setViewingItem(item);
+      return;
+    }
+    setViewingItem(null);
+    setBackgroundOutcome(null);
     setWebBook(item);
     setQuery(item.topic);
     setError(null);
@@ -301,6 +341,9 @@ export function useWebBookEngine() {
 
   const deleteHistoryItem = (id: string) => {
     setHistory((previousHistory) => previousHistory.filter((item) => item.id !== id));
+    if (viewingItemRef.current?.id === id) {
+      setViewingItem(null);
+    }
     if (webBook?.id === id) {
       startNewSearch();
     }
@@ -316,6 +359,7 @@ export function useWebBookEngine() {
     }
 
     setHistory([]);
+    setViewingItem(null);
     if (webBook) {
       startNewSearch();
     }
@@ -342,5 +386,10 @@ export function useWebBookEngine() {
     viewHistoryItem,
     deleteHistoryItem,
     clearAllHistory,
+    viewingItem,
+    runTopic,
+    backgroundOutcome,
+    isRunInProgress,
+    returnToRun,
   };
 }

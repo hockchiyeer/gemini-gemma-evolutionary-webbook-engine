@@ -9,6 +9,7 @@ import { BookOpen, Dna, Loader2 } from 'lucide-react';
 import { AppHeader } from './components/AppHeader';
 import { ControlSidebar } from './components/ControlSidebar';
 import { HistoryDrawer } from './components/HistoryDrawer';
+import { LiveRunBanner, getLiveRunLabel } from './components/LiveRunBanner';
 import { WebBookViewer } from './WebBookViewer';
 import { WebBookErrorBoundary } from './WebBookErrorBoundary';
 import { useWebBookEngine } from './hooks/useWebBookEngine';
@@ -49,21 +50,41 @@ export default function App() {
     viewHistoryItem,
     deleteHistoryItem,
     clearAllHistory,
+    viewingItem,
+    runTopic,
+    backgroundOutcome,
+    isRunInProgress,
+    returnToRun,
   } = useWebBookEngine();
 
   const isBusy = state.status !== 'idle' && state.status !== 'complete';
 
-  useEffect(() => {
-    document.title = getWebBookDocumentTitle(webBook?.topic);
-  }, [webBook?.topic]);
+  // The book on screen: an archived item browsed during a background run, otherwise the engine's own book.
+  const displayedBook = viewingItem ?? webBook;
+  const showLiveBanner = !!viewingItem && (isRunInProgress || backgroundOutcome !== null);
+  const liveRunInfo = isRunInProgress || backgroundOutcome
+    ? {
+        topic: runTopic || query,
+        statusLabel: backgroundOutcome === 'complete'
+          ? 'Finished: new WebBook ready'
+          : backgroundOutcome === 'failed'
+            ? 'Generation failed'
+            : `${getLiveRunLabel(state.status).label} (${getLiveRunLabel(state.status).pct}%)`,
+        outcome: backgroundOutcome,
+      }
+    : null;
 
   useEffect(() => {
-    if (!webBook) return;
-    const cleanup = prewarmExportAssets(webBook);
+    document.title = getWebBookDocumentTitle(displayedBook?.topic);
+  }, [displayedBook?.topic]);
+
+  useEffect(() => {
+    if (!displayedBook) return;
+    const cleanup = prewarmExportAssets(displayedBook);
     return () => {
       cleanup?.();
     };
-  }, [webBook]);
+  }, [displayedBook]);
 
   const runExport = async (action: () => Promise<void>) => {
     setIsExporting(true);
@@ -87,19 +108,20 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0]">
       <AppHeader
-        webBook={webBook}
+        webBook={displayedBook}
         isBusy={isBusy}
         isExporting={isExporting}
         exportStatus={exportStatus}
         onNewSearch={startNewSearch}
         onToggleHistory={() => setShowHistory(true)}
-        onExportPdf={() => webBook ? runExport(() => exportWebBookToPdf(webBook)) : Promise.resolve()}
-        onExportPrint={() => webBook ? runExport(() => printWebBook(webBook)) : Promise.resolve()}
-        onExportPrintFriendlyPdf={() => webBook ? runExport(() => exportPrintFriendlyWebBookToPdf(webBook)) : Promise.resolve()}
-        onExportPrintFriendlyImage={() => webBook ? runExport(() => exportPrintFriendlyWebBookToImage(webBook)) : Promise.resolve()}
-        onExportWord={() => webBook ? runExport(() => exportWebBookToWord(webBook)) : Promise.resolve()}
-        onExportHtml={() => webBook ? runExport(() => exportWebBookToHtml(webBook)) : Promise.resolve()}
-        onExportTxt={() => webBook ? runExport(() => exportWebBookToTxt(webBook)) : Promise.resolve()}
+        liveRunActive={isRunInProgress || backgroundOutcome !== null}
+        onExportPdf={() => displayedBook ? runExport(() => exportWebBookToPdf(displayedBook)) : Promise.resolve()}
+        onExportPrint={() => displayedBook ? runExport(() => printWebBook(displayedBook)) : Promise.resolve()}
+        onExportPrintFriendlyPdf={() => displayedBook ? runExport(() => exportPrintFriendlyWebBookToPdf(displayedBook)) : Promise.resolve()}
+        onExportPrintFriendlyImage={() => displayedBook ? runExport(() => exportPrintFriendlyWebBookToImage(displayedBook)) : Promise.resolve()}
+        onExportWord={() => displayedBook ? runExport(() => exportWebBookToWord(displayedBook)) : Promise.resolve()}
+        onExportHtml={() => displayedBook ? runExport(() => exportWebBookToHtml(displayedBook)) : Promise.resolve()}
+        onExportTxt={() => displayedBook ? runExport(() => exportWebBookToTxt(displayedBook)) : Promise.resolve()}
       />
 
       <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8 print:block print:p-0">
@@ -127,6 +149,16 @@ export default function App() {
           </div>
         )}
 
+        {showLiveBanner && viewingItem && (
+          <LiveRunBanner
+            status={state.status}
+            topic={runTopic || query}
+            outcome={backgroundOutcome}
+            viewingTitle={viewingItem.topic}
+            onReturn={returnToRun}
+          />
+        )}
+
         <ControlSidebar
           query={query}
           onQueryChange={setQuery}
@@ -145,7 +177,7 @@ export default function App() {
 
         <div className="lg:col-span-8 print:w-full">
           <AnimatePresence mode="wait">
-            {!webBook && state.status === 'idle' && (
+            {!displayedBook && state.status === 'idle' && (
               <motion.div
                 key="empty"
                 initial={{ opacity: 0 }}
@@ -158,7 +190,7 @@ export default function App() {
               </motion.div>
             )}
 
-            {(state.status === 'searching' || state.status === 'evolving' || state.status === 'assembling') && (
+            {!viewingItem && (state.status === 'searching' || state.status === 'evolving' || state.status === 'assembling') && (
               <motion.div
                 key="loading"
                 initial={{ opacity: 0 }}
@@ -185,7 +217,7 @@ export default function App() {
               </motion.div>
             )}
 
-            {webBook && state.status !== 'searching' && state.status !== 'evolving' && state.status !== 'assembling' && (
+            {displayedBook && (viewingItem || (state.status !== 'searching' && state.status !== 'evolving' && state.status !== 'assembling')) && (
               <motion.div
                 key="content"
                 initial={{ opacity: 0, scale: 0.98 }}
@@ -193,7 +225,7 @@ export default function App() {
                 className="flex flex-col items-center gap-8 pb-20 overflow-x-hidden print:block print:overflow-visible print:pb-0"
               >
                 <WebBookErrorBoundary>
-                  <WebBookViewer webBook={webBook} />
+                  <WebBookViewer webBook={displayedBook} />
                 </WebBookErrorBoundary>
               </motion.div>
             )}
@@ -205,6 +237,13 @@ export default function App() {
         showHistory={showHistory}
         history={history}
         onClose={() => setShowHistory(false)}
+        viewingId={viewingItem?.id ?? null}
+        liveRun={liveRunInfo}
+        isViewingLive={!viewingItem}
+        onViewLive={() => {
+          returnToRun();
+          setShowHistory(false);
+        }}
         onView={(item) => {
           viewHistoryItem(item);
           setShowHistory(false);

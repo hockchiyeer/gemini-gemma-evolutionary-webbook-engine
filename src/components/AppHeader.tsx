@@ -20,6 +20,7 @@ interface AppHeaderProps {
   exportStatus?: string | null;
   onNewSearch: () => void;
   onToggleHistory: () => void;
+  liveRunActive?: boolean;
   onExportPdf: () => Promise<void>;
   onExportPrint: () => Promise<void>;
   onExportPrintFriendlyPdf: () => Promise<void>;
@@ -36,6 +37,7 @@ export function AppHeader({
   exportStatus,
   onNewSearch,
   onToggleHistory,
+  liveRunActive = false,
   onExportPdf,
   onExportPrint,
   onExportPrintFriendlyPdf,
@@ -204,7 +206,11 @@ export function AppHeader({
             title="View and manage previously generated Web-books"
             className="flex items-center gap-2 text-[10px] md:text-[11px] uppercase tracking-wider font-bold hover:opacity-70 transition-opacity"
           >
-            <History size={14} /> <span className="hidden sm:inline">History</span>
+            <span className="relative">
+              <History size={14} />
+              {liveRunActive && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
+            </span>
+            <span className="hidden sm:inline">History</span>
           </button>
         </div>
       </div>

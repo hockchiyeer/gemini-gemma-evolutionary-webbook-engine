@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronRight, Clock, History, Trash2, X } from 'lucide-react';
+import { ChevronRight, Clock, History, Loader2, Trash2, X } from 'lucide-react';
 import type { WebBook } from '../types';
 
 interface HistoryDrawerProps {
@@ -10,6 +10,10 @@ interface HistoryDrawerProps {
   onView: (item: WebBook) => void;
   onDelete: (id: string) => void;
   onClearAll: () => void;
+  viewingId?: string | null;
+  liveRun?: { topic: string; statusLabel: string; outcome: 'complete' | 'failed' | null } | null;
+  isViewingLive?: boolean;
+  onViewLive?: () => void;
 }
 
 export function HistoryDrawer({
@@ -19,6 +23,10 @@ export function HistoryDrawer({
   onView,
   onDelete,
   onClearAll,
+  viewingId = null,
+  liveRun = null,
+  isViewingLive = true,
+  onViewLive,
 }: HistoryDrawerProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
@@ -52,6 +60,24 @@ export function HistoryDrawer({
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {liveRun && (
+                <div className="bg-[#141414] text-[#E4E3E0] border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,0.35)]">
+                  <div className="flex items-center gap-2 text-[9px] uppercase font-mono tracking-wider opacity-80 mb-2">
+                    {!liveRun.outcome && <Loader2 size={12} className="animate-spin" />}
+                    {liveRun.outcome ? 'Latest generation' : 'Generation in progress'}
+                  </div>
+                  <h3 className="font-serif italic font-bold text-lg leading-tight mb-1">{liveRun.topic}</h3>
+                  <p className="text-[10px] uppercase tracking-wider opacity-70 mb-3">{liveRun.statusLabel}</p>
+                  <button
+                    onClick={onViewLive}
+                    disabled={isViewingLive}
+                    className="text-[10px] uppercase font-bold flex items-center gap-1 hover:underline disabled:opacity-60 disabled:no-underline"
+                  >
+                    {isViewingLive ? 'Currently showing' : liveRun.outcome === 'complete' ? 'View new book' : 'Switch to live generation'}
+                    {!isViewingLive && <ChevronRight size={12} />}
+                  </button>
+                </div>
+              )}
               {history.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center opacity-30 text-center">
                   <Clock size={48} />
@@ -61,7 +87,7 @@ export function HistoryDrawer({
                 history.map((item) => (
                   <div
                     key={item.id}
-                    className="bg-white border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all group relative"
+                    className={`${viewingId === item.id ? 'bg-[#F5F5F5] ring-2 ring-[#141414]' : 'bg-white'} border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all group relative`}
                   >
                     <div className="flex justify-between items-start mb-2">
                       <span className="text-[9px] uppercase font-mono opacity-50">
@@ -104,7 +130,7 @@ export function HistoryDrawer({
                     </div>
                     <h3 className="font-serif italic font-bold text-lg leading-tight mb-3">{item.topic}</h3>
                     <div className="flex justify-between items-center gap-3">
-                      <span className="text-[10px] uppercase font-bold opacity-60">{item.chapters.length} Chapters</span>
+                      <span className="text-[10px] uppercase font-bold opacity-60">{viewingId === item.id ? 'Viewing now' : `${item.chapters.length} Chapters`}</span>
                       <button
                         onClick={() => onView(item)}
                         title="Load this archived Web-book into the viewer"
