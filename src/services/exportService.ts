@@ -42,7 +42,7 @@ function getTextVisualWidth(str: string): number {
   return width;
 }
 
-export async function exportWebBookToTxt(webBook: WebBook): Promise<void> {
+export function buildWebBookTxtContent(webBook: WebBook): string {
   const safeWebBook = sanitizeWebBookForPresentation(webBook);
   const L = getExportLabels(safeWebBook);
   let text = `${safeWebBook.topic.toUpperCase()}\n`;
@@ -91,6 +91,12 @@ export async function exportWebBookToTxt(webBook: WebBook): Promise<void> {
     text += '\n';
   });
 
+  return text;
+}
+
+export async function exportWebBookToTxt(webBook: WebBook): Promise<void> {
+  const text = buildWebBookTxtContent(webBook);
+  const safeWebBook = sanitizeWebBookForPresentation(webBook);
   downloadBlob(
     new Blob([text], { type: 'text/plain' }),
     getExportFileName(safeWebBook.topic, 'txt')

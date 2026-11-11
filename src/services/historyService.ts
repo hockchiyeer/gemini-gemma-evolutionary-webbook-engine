@@ -29,6 +29,7 @@ import {
   type WebBook,
   type WebBookSourceMode,
 } from '../types';
+import { buildWebBookTxtContent } from './exportService';
 
 const LOCAL_HISTORY_KEY = 'webbook_history';
 
@@ -353,4 +354,46 @@ export function loadLocalHistoryBooks(): WebBook[] {
 
 export function saveLocalHistoryBooks(history: WebBook[]): void {
   localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(history));
+}
+
+/**
+ * Persists a generated WebBook as a formatted .txt file on the server in the saved_webbooks/ folder.
+ * Ensures that even if the user never manually downloads or exports, the book is preserved on disk.
+ */
+export async function persistWebBookTextToServer(webBook: WebBook, textContent?: string): Promise<{ ok: boolean; fileName?: string; filePath?: string }> {
+  if (!webBook || !webBook.topic) return { ok: false };
+  try {
+    const text = textContent || buildWebBookTxtContent(webBook);
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost:3000';
+    const res = await fetch(`${origin}/api/webbooks/persist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: webBook.topic,
+        text,
+        timestamp: webBook.timestamp,
+        id: webBook.id,
+      }),
+    });
+    if (!res.ok) return { ok: false };
+    return await res.json().catch(() => ({ ok: false }));
+  } catch (error) {
+    console.warn('Persisting webbook text to server failed (non-fatal):', error);
+    return { ok: false };
+  }
+}
+
+/**
+ * Lists all persisted WebBook text files saved on the server.
+ */
+export async function fetchPersistedWebBooksFromServer(): Promise<Array<{ fileName: string; size: number; modifiedAt: number }>> {
+  try {
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost:3000';
+    const res = await fetch(`${origin}/api/webbooks/list`);
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.files) ? data.files : [];
+  } catch {
+    return [];
+  }
 }

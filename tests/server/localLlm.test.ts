@@ -336,6 +336,7 @@ const fake = await startFakeLlm(['gemma4:e4b', 'qwen3:8b']);
   assert.equal(googleCalls, 1, 'Google is tried first');
   assert.equal(failedOver.status, 200, 'a rejected key is answered by the local model');
   assert.equal(failedOver.json.provider, 'local');
+  assert.equal(failedOver.json.error, undefined, 'a local answer carries no error at all');
 
   // search grounding with a rejected key stays Google's error: a local model cannot search
   const groundedBefore = fake.requests.length;
@@ -349,6 +350,17 @@ const fake = await startFakeLlm(['gemma4:e4b', 'qwen3:8b']);
   const noLocal = await post('/api/gemini/generate', { contents: 'x' });
   assert.notEqual(noLocal.status, 200);
   assert.equal(noLocal.json.error.reason, 'invalid_api_key');
+  assert.equal(noLocal.json.error.localFailover, undefined, 'a local model that is not ready is not tried, so nothing is reported about it');
+
+  // a local model that is ready but fails (here: too slow) is tried, and its failure travels with Google's error
+  setEnv({ LOCAL_LLM_BASE_URL: fake.url, LOCAL_LLM_TIMEOUT_MS: '150', GEMINI_API_KEY: 'AIzaSyFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE12', GEMINI_MAX_ATTEMPTS: '1' });
+  fake.delayMs = 600;
+  const localFailed = await post('/api/gemini/generate', { contents: 'x' });
+  fake.delayMs = 0;
+  assert.notEqual(localFailed.status, 200);
+  assert.equal(localFailed.json.error.reason, 'invalid_api_key', "Google's error is still the one reported");
+  assert.equal(localFailed.json.error.localFailover?.reason, 'local_timeout');
+  assert.ok(String(localFailed.json.error.localFailover?.message).length > 0);
 
   // gemini mode with a rejected key: no failover at all
   setEnv({ LLM_PROVIDER: 'gemini', LOCAL_LLM_BASE_URL: fake.url, GEMINI_API_KEY: 'AIzaSyFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE12', GEMINI_MAX_ATTEMPTS: '1' });
@@ -356,6 +368,7 @@ const fake = await startFakeLlm(['gemma4:e4b', 'qwen3:8b']);
   const strict = await post('/api/gemini/generate', { contents: 'x' });
   assert.notEqual(strict.status, 200);
   assert.equal(fake.requests.length, beforeGemini);
+  assert.equal(strict.json.error.localFailover, undefined, 'no local model was tried, so nothing is reported about one');
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

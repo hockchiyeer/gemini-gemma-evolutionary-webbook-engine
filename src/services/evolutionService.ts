@@ -276,6 +276,7 @@ async function generateWithModelFallback(
           errorObj.reason = resData?.error?.reason;
           errorObj.retriesExhausted = resData?.error?.retriesExhausted === true;
           errorObj.details = resData?.error?.details;
+          errorObj.localFailover = resData?.error?.localFailover;
           throw errorObj;
         }
 
@@ -1848,6 +1849,13 @@ export async function attachKnowledgeReferences(
   };
 }
 
+/** " The local model was tried in Google's place and failed (<reason>: <why>)." - empty when none was tried. */
+export function localFailoverNote(err: unknown): string {
+  const failure = (err as any)?.localFailover;
+  if (!failure || typeof failure.message !== 'string') return '';
+  return ` The local model was tried in its place and failed too (${String(failure.reason || 'local_failed')}: ${failure.message.replace(/[.\s]+$/, '')}).`;
+}
+
 async function assembleWebBookCore(
   optimalPopulation: WebPageGenotype[],
   topic: string,
@@ -2191,14 +2199,14 @@ async function assembleWebBookCore(
     if (cause === 'no_content') {
       throw new Error(`Selected Gemini model: ${preferredModel} returned no usable book content. Please try again.`);
     }
-    throw new Error(buildGeminiUserFacingErrorMessage(assemblyFailure, detectGeminiFailureReason(assemblyFailure)));
+    throw new Error(`${buildGeminiUserFacingErrorMessage(assemblyFailure, detectGeminiFailureReason(assemblyFailure))}${localFailoverNote(assemblyFailure)}`);
   }
 
   // Graceful resilient fallback synthesis: ensures no alerts/crashes when Gemini quota is met.
   // The notice must describe what really happened, not the (successful) search step that preceded it.
   if (assemblyFailure) {
     const cause = classifyGeminiSearchFailure(assemblyFailure);
-    const assemblyNote = `Selected Gemini model: ${preferredModel} unavailable for book assembly (${cause === 'no_content' ? 'no usable content returned' : GEMINI_SEARCH_CAUSE_PHRASES[cause]}); book text assembled offline from the gathered evidence.`;
+    const assemblyNote = `Selected Gemini model: ${preferredModel} unavailable for book assembly (${cause === 'no_content' ? 'no usable content returned' : GEMINI_SEARCH_CAUSE_PHRASES[cause]}); book text assembled offline from the gathered evidence.${localFailoverNote(assemblyFailure)}`;
     const searchWasGemini = searchResult?.sourceMode === 'gemini';
     return synthesizeFallbackWebBook(topic, optimalPopulation, {
       ...(searchResult || {}),

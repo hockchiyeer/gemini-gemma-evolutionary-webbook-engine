@@ -3,6 +3,7 @@ import express from "express";
 import path from "node:path";
 import { createApiCompatibilityMiddleware } from "./googleSearchFallback.ts";
 import { createGeminiMiddleware, setupGeminiLiveWebSocket } from "./geminiService.ts";
+import { createWebBookStoreMiddleware } from "./webBookStore.ts";
 
 async function startServer() {
   const app = express();
@@ -12,6 +13,7 @@ async function startServer() {
   // API routes FIRST
   app.use(createGeminiMiddleware() as any);
   app.use(createApiCompatibilityMiddleware() as any);
+  app.use(createWebBookStoreMiddleware() as any);
   setupGeminiLiveWebSocket(server);
 
   app.post("/__pdf", express.json({ limit: "50mb" }), async (req, res) => {

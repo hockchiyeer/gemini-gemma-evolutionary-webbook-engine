@@ -415,6 +415,17 @@ function toLocalError(err: unknown): LocalLlmError {
   return new LocalLlmError('local_rejected', 'The local model failed unexpectedly.', { upstreamMessage: String((err as any)?.message || err).slice(0, 300) });
 }
 
+/** Why a local answer failed, small enough to travel with Google's error (the one the user acts on) so the cause is not lost. */
+export interface LocalFailoverFailure {
+  reason: string;
+  message: string;
+}
+
+export function describeLocalFailure(err: unknown): LocalFailoverFailure {
+  const local = toLocalError(err);
+  return { reason: local.reason, message: String(local.message).replace(/\s+/g, ' ').slice(0, 300) };
+}
+
 /** Writes with the built-in runtime. Same gate, same schema translation, same time limit as the external-server path. */
 async function callEmbedded(body: { contents?: any; config?: any }, cfg: LocalLlmConfig, status: LocalLlmStatus, env: NodeJS.ProcessEnv): Promise<LocalGenerateResult> {
   const request = buildChatRequest(body, status.model, cfg);

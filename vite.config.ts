@@ -4,10 +4,11 @@ import path from 'path';
 import {defineConfig} from 'vite';
 import {googleSearchFallbackPlugin} from './server/googleSearchFallback.ts';
 import {geminiPlugin} from './server/geminiService.ts';
+import {webBookStorePlugin} from './server/webBookStore.ts';
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), geminiPlugin(), googleSearchFallbackPlugin()],
+    plugins: [react(), tailwindcss(), geminiPlugin(), googleSearchFallbackPlugin(), webBookStorePlugin()],
     // html2canvas and jspdf are only imported when an export button is clicked. In the Vite dev server (AI Studio) a late-discovered
     // dependency triggers a re-optimisation that invalidates the already-issued module URL ("Failed to fetch dynamically imported module").
     // jspdf loads canvg and dompurify (and fflate / fast-png) lazily; if they are only discovered at the first export click, Vite re-optimises
@@ -25,7 +26,7 @@ export default defineConfig(() => {
       port: 3000,
       allowedHosts: true,
       watch: {
-        ignored: ['**/models/**', '**/dist/**', '**/public/fonts/**', '**/*.gguf'],
+        ignored: ['**/models/**', '**/dist/**', '**/public/fonts/**', '**/*.gguf', '**/saved_webbooks/**', '**/exports/**'],
       },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       hmr: process.env.DISABLE_HMR !== 'true',

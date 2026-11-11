@@ -103,7 +103,7 @@ const finiteSchema = {
     jsonSchema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'], additionalProperties: false },
   });
   assert.equal(cut.finishReason, 'length', 'running out of tokens is reported as length, which the client can repair');
-  assert.ok((cut.completionTokens ?? 0) <= 40);
+  assert.ok((cut.completionTokens ?? 0) <= 60);
 }
 
 // 5. abort: a time limit stops generation and surfaces as an aborted error

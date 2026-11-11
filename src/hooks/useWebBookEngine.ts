@@ -16,6 +16,7 @@ import {
   loadLocalHistoryBooks,
   loadPersistedWebBooks,
   mergeHistoryBooks,
+  persistWebBookTextToServer,
   saveLocalHistoryBooks,
 } from '../services/historyService';
 
@@ -42,17 +43,53 @@ function isCancelledSearchError(error: unknown): boolean {
 
 export function useWebBookEngine() {
   const activeRunIdRef = useRef(0);
-  const [query, setQuery] = useState('');
-  const [state, setState] = useState<EvolutionState>(INITIAL_STATE);
-  const [webBook, setWebBook] = useState<WebBook | null>(null);
-  const [history, setHistory] = useState<WebBook[]>([]);
+  const isInitialMountRef = useRef(true);
+
+  // Lazily restore history from localStorage to avoid StrictMode double-mount wiping storage with []
+  const [history, setHistory] = useState<WebBook[]>(() => loadLocalHistoryBooks());
+
+  // Restore the latest book on refresh so a page refresh does not remove what the user queried or generated
+  const [webBook, setWebBook] = useState<WebBook | null>(() => {
+    const local = loadLocalHistoryBooks();
+    return local.length > 0 ? local[0] : null;
+  });
+
+  const [query, setQuery] = useState<string>(() => {
+    const local = loadLocalHistoryBooks();
+    return local.length > 0 ? local[0].topic : '';
+  });
+
+  const [state, setState] = useState<EvolutionState>(() => {
+    const local = loadLocalHistoryBooks();
+    if (local.length > 0) {
+      const first = local[0];
+      return {
+        generation: first.completedGenerations ?? 3,
+        population: [],
+        bestFitness: 0,
+        status: 'complete',
+        artifacts: {},
+      };
+    }
+    return INITIAL_STATE;
+  });
+
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+
+  const [notice, setNotice] = useState<string | null>(() => {
+    const local = loadLocalHistoryBooks();
+    return local.length > 0 ? (local[0].generationNote || null) : null;
+  });
+
   const [fallbackMode, setFallbackMode] = useState<SearchFallbackMode>('google_duckduckgo');
   const [geminiModel, setGeminiModel] = useState<EngineOptions['geminiModel']>('gemini-3.6-flash');
 
   useEffect(() => {
-    setHistory(loadLocalHistoryBooks());
+    const local = loadLocalHistoryBooks();
+    if (local.length > 0) {
+      // Best-effort auto-persist existing local book to server disk in case it was generated prior
+      void persistWebBookTextToServer(local[0]).catch(() => {});
+    }
     void discoverAvailableGeminiModels();
   }, []);
 
@@ -77,6 +114,10 @@ export function useWebBookEngine() {
   }, []);
 
   useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      return;
+    }
     saveLocalHistoryBooks(history);
   }, [history]);
 
@@ -193,6 +234,11 @@ export function useWebBookEngine() {
 
       void completePersistedSearch(persistedSearchId, trimmedQuery, book).catch((persistenceError) => {
         console.error('Failed to persist completed WebBook', persistenceError);
+      });
+
+      // Auto-persist formatted WebBook text to server saved_webbooks/ folder
+      void persistWebBookTextToServer(book).catch((saveErr) => {
+        console.warn('Failed to auto-persist WebBook to server disk', saveErr);
       });
 
       setState((previousState) => ({

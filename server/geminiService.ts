@@ -11,6 +11,7 @@ import {
   LocalLlmError,
   buildLocalErrorPayload,
   callLocalLlm,
+  describeLocalFailure,
   getLocalLlmStatus,
   getProviderMode,
   planGeneration,
@@ -189,7 +190,18 @@ function sendJson(res: ServerResponse, statusCode: number, payload: unknown, hea
   res.end(JSON.stringify(payload));
 }
 
-function buildErrorPayload(classified: ClassifiedGeminiError, attempts = 1) {
+/**
+ * Google's own error is still what the user is told (it is the one they can act on), but when a local model was tried in its
+ * place and failed, that failure travels with it: without it, "the daily quota is used up" hides that the local model was
+ * ready and failed too, and nothing in the log says why.
+ */
+function attachLocalFailover(googleError: unknown, localError: unknown): void {
+  const failure = describeLocalFailure(localError);
+  console.warn(`[gemini] the local model could not answer either (${failure.reason}): ${failure.message}`);
+  if (googleError && typeof googleError === "object") (googleError as any).localFailover = failure;
+}
+
+function buildErrorPayload(classified: ClassifiedGeminiError, attempts = 1, localFailover?: { reason: string; message: string }) {
   return {
     error: {
       message: classified.message,
@@ -200,6 +212,8 @@ function buildErrorPayload(classified: ClassifiedGeminiError, attempts = 1) {
       retryAfterSeconds: classified.retryAfterMs != null ? Math.ceil(classified.retryAfterMs / 1000) : undefined,
       // True when the server already retried this request, so the client must not retry it again.
       retriesExhausted: (classified.retryable && attempts > 1) || classified.reason === "timeout",
+      // Present only when a local model was tried instead of Google and failed too.
+      localFailover,
     },
   };
 }
@@ -209,7 +223,7 @@ function sendGeminiError(res: ServerResponse, err: unknown): void {
   const attempts = err instanceof GeminiCallError ? err.attempts : 1;
   const headers: Record<string, string> = {};
   if (classified.retryAfterMs != null) headers["Retry-After"] = String(Math.ceil(classified.retryAfterMs / 1000));
-  sendJson(res, classified.httpStatus || 500, buildErrorPayload(classified, attempts), headers);
+  sendJson(res, classified.httpStatus || 500, buildErrorPayload(classified, attempts, (err as any)?.localFailover), headers);
 }
 
 function missingKeyPayload() {
@@ -302,8 +316,9 @@ export async function handleGeminiGenerate(req: IncomingMessage, res: ServerResp
         try {
           sendJson(res, 200, localResponsePayload(await callLocalLlm(body)));
           return;
-        } catch {
-          // The local model failed too: report Google's error, which is the one the user can act on.
+        } catch (localErr) {
+          // The local model failed too: report Google's error, which is the one the user can act on, with the local failure attached.
+          attachLocalFailover(err, localErr);
         }
       }
       sendGeminiError(res, err);
@@ -374,8 +389,9 @@ export async function handleGeminiStream(req: IncomingMessage, res: ServerRespon
         try {
           sendLocalStream(await callLocalLlm(body));
           return;
-        } catch {
-          // The local model failed too: report Google's error.
+        } catch (localErr) {
+          // The local model failed too: report Google's error, with the local failure attached.
+          attachLocalFailover(err, localErr);
         }
       }
       throw err;
@@ -403,7 +419,7 @@ export async function handleGeminiStream(req: IncomingMessage, res: ServerRespon
       sendGeminiError(res, err);
     } else {
       const classified = err instanceof GeminiCallError ? err.classified : classifyGeminiError(err);
-      res.write(`data: ${JSON.stringify(buildErrorPayload(classified))}\n\n`);
+      res.write(`data: ${JSON.stringify(buildErrorPayload(classified, 1, err?.localFailover))}\n\n`);
       res.end();
     }
   }
