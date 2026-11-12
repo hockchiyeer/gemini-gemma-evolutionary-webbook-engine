@@ -131,7 +131,7 @@ export function AppHeader({
                   ) : (
                     <>
                       <Download size={12} />
-                      <span className="hidden sm:inline">Export</span>
+                      <span className="inline font-bold">Export</span>
                       <ChevronDown size={12} className={`transition-transform ${showExportOptions ? 'rotate-180' : ''}`} />
                     </>
                   )}
@@ -143,7 +143,7 @@ export function AppHeader({
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 10 }}
-                      className="absolute top-full left-0 right-auto md:left-auto md:right-0 mt-2 w-56 bg-white border border-[#141414] shadow-2xl z-50 overflow-hidden print:hidden"
+                      className="absolute top-full right-0 mt-2 w-56 bg-white border border-[#141414] shadow-2xl z-50 overflow-hidden print:hidden"
                     >
                       <button
                         onClick={() => void runExport(onExportPdf)}

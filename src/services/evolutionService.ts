@@ -1856,6 +1856,41 @@ export function localFailoverNote(err: unknown): string {
   return ` The local model was tried in its place and failed too (${String(failure.reason || 'local_failed')}: ${failure.message.replace(/[.\s]+$/, '')}).`;
 }
 
+function deduplicateOutlineTitles(outlineEntries: any[]): any[] {
+  if (!Array.isArray(outlineEntries) || outlineEntries.length === 0) return [];
+  const seenCount = new Map<string, number>();
+  const result: any[] = [];
+
+  for (const entry of outlineEntries) {
+    if (!entry || !entry.title) continue;
+    const rawTitle = String(entry.title).trim();
+    const cleanTitle = rawTitle
+      .replace(/^(?:CHAPTER|BAB|CAPÍTULO|CAPITULO|CHAPITRE|KAPITEL|第\s*\d+\s*章|제\s*\d+\s*장)\s*\d*[:：\s]\s*/i, '')
+      .trim() || rawTitle;
+
+    const normKey = cleanTitle.toLowerCase().replace(/[\s:：、，,.\-—–_]+/g, '');
+    const count = seenCount.get(normKey) || 0;
+    seenCount.set(normKey, count + 1);
+
+    let finalTitle = cleanTitle;
+    if (count > 0) {
+      const sub = Array.isArray(entry.subTopicTitles) && entry.subTopicTitles[0] ? String(entry.subTopicTitles[0]).trim() : '';
+      if (sub && !cleanTitle.toLowerCase().includes(sub.toLowerCase())) {
+        finalTitle = `${cleanTitle} (${sub})`;
+      } else {
+        finalTitle = `${cleanTitle} (${count + 1})`;
+      }
+    }
+
+    result.push({
+      ...entry,
+      title: finalTitle,
+    });
+  }
+
+  return result;
+}
+
 async function assembleWebBookCore(
   optimalPopulation: WebPageGenotype[],
   topic: string,
@@ -2045,6 +2080,9 @@ async function assembleWebBookCore(
         outlinePathNote = 'Outline derived from gathered sources.';
       }
     }
+
+    // Deduplicate and clean outline titles so no two chapters share an identical title
+    outline = deduplicateOutlineTitles(outline);
 
     if (outline.length > 0) {
       const outlineTitles = outline.map((entry, index) => `${index + 1}. ${entry?.title}`).join('\n');

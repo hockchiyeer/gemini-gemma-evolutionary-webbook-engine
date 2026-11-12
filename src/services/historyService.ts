@@ -540,7 +540,11 @@ export function parseTxtContentToWebBook(fileName: string, text: string, modifie
       }
 
       if (currentSection === 'content') {
-        contentLines.push(rawLine);
+        const trimmedLine = rawLine.trim();
+        // Ignore orphan divider lines (e.g. ==================== or --------------------)
+        if (!/^\s*[=_\-]{3,}\s*$/.test(trimmedLine)) {
+          contentLines.push(rawLine);
+        }
       } else if (currentSection === 'concepts') {
         if (line.startsWith('-')) defLines.push(line);
       } else if (currentSection === 'subtopics') {
@@ -586,9 +590,15 @@ export function parseTxtContentToWebBook(fileName: string, text: string, modifie
       }
     }
 
+    const chapterContent = contentLines.join('\n').replace(/^[=_\-\s]+$/gm, '').trim();
+    // Skip empty phantom chapters with no content, definitions, subtopics or sources
+    if (!chapterContent && definitions.length === 0 && subTopics.length === 0 && sourceUrls.length === 0) {
+      continue;
+    }
+
     chapters.push({
       title,
-      content: contentLines.join('\n').trim(),
+      content: chapterContent,
       visualSeed,
       definitions,
       subTopics,

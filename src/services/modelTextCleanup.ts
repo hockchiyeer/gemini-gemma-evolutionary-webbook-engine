@@ -41,18 +41,36 @@ export function cleanChapterContent(content: string, chapterTitle = ''): string 
   const lines = String(content ?? '').replace(/\r\n?/g, '\n').split('\n');
   const kept: string[] = [];
   for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    // Strip standalone divider lines (e.g. ==================== or --------------------)
+    if (/^\s*[=_\-]{3,}\s*$/.test(trimmed)) continue;
+
+    // Strip lines that are TOC chapter lists (e.g. "第3章：... 第4章：...")
+    const chapterMatches = trimmed.match(/(?:第\s*\d+\s*章|Chapter\s+\d+)/gi);
+    if (chapterMatches && chapterMatches.length >= 2) continue;
+
     const heading = raw.match(HEADING_LINE);
     if (heading) {
       const text = stripMarkdownInline(heading[1]).trim();
       const key = norm(text);
-      // heading that repeats the title, or a numbered chapter heading ("第七章：...") that the book already prints itself
       if (!text || (titleKey && key === titleKey) || /^第[\d一二三四五六七八九十百]+章/.test(text) || /^chapter\s+\d+/i.test(text)) continue;
       kept.push(text);
       continue;
     }
+
+    // Strip plain lines starting with Chapter / 第X章 when repeating chapter title or chapter index
+    if (/^(?:第[\d一二三四五六七八九十百\d]+章|Chapter\s+\d+)[:：\s]/i.test(trimmed)) {
+      const strippedText = trimmed.replace(/^(?:第[\d一二三四五六七八九十百\d]+章|Chapter\s+\d+)[:：\s]*/i, '').trim();
+      const key = norm(strippedText);
+      if (!strippedText || (titleKey && key === titleKey)) continue;
+      kept.push(stripMarkdownInline(strippedText));
+      continue;
+    }
+
     kept.push(stripMarkdownInline(raw).replace(/\s+$/g, ''));
   }
-  // Small models often open the body with the chapter title as a plain line (no "#"), which then prints twice.
+
   const firstIndex = kept.findIndex((line) => line.trim() !== '');
   if (firstIndex >= 0 && isTitleEcho(kept[firstIndex], chapterTitle)) kept.splice(firstIndex, 1);
   return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();

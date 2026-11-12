@@ -45,21 +45,33 @@ function getTextVisualWidth(str: string): number {
 export function buildWebBookTxtContent(webBook: WebBook): string {
   const safeWebBook = sanitizeWebBookForPresentation(webBook);
   const L = getExportLabels(safeWebBook);
+  const usableChapters = safeWebBook.chapters.filter((ch) => {
+    const cleanContent = String(ch.content || '').replace(/^[=_\-\s]+$/gm, '').trim();
+    const hasDefs = Array.isArray(ch.definitions) && ch.definitions.length > 0;
+    const hasSubs = Array.isArray(ch.subTopics) && ch.subTopics.length > 0;
+    const hasSources = Array.isArray(ch.sourceUrls) && ch.sourceUrls.length > 0;
+    return cleanContent.length > 0 || hasDefs || hasSubs || hasSources;
+  });
+  const chaptersToExport = usableChapters.length > 0 ? usableChapters : safeWebBook.chapters;
+
   let text = `${safeWebBook.topic.toUpperCase()}\n`;
   text += `${L.generatedOn}${L.colon}${new Date(safeWebBook.timestamp).toLocaleString(L.dateLocale)}\n\n`;
 
   text += `${L.upper(L.tableOfContents)}\n`;
   text += `${'='.repeat(getTextVisualWidth(L.upper(L.tableOfContents)))}\n\n`;
-  safeWebBook.chapters.forEach((chapter, index) => {
+  chaptersToExport.forEach((chapter, index) => {
     text += `${L.chapter(index + 1)}${L.colon}${chapter.title}\n`;
   });
   text += '\n\n';
 
-  safeWebBook.chapters.forEach((chapter, index) => {
+  chaptersToExport.forEach((chapter, index) => {
     const chapterHeading = `${L.upper(L.chapter(index + 1))}${L.colon}${chapter.title}`;
     text += `${chapterHeading}\n`;
     text += `${'='.repeat(getTextVisualWidth(chapterHeading))}\n\n`;
-    text += `${chapter.content}\n\n`;
+    const cleanBody = String(chapter.content || '').replace(/^[=_\-\s]+$/gm, '').trim();
+    if (cleanBody) {
+      text += `${cleanBody}\n\n`;
+    }
     if (hasRealVisualCaption(chapter)) {
       text += `${L.upper(L.visualConcept)}${L.colon}${chapter.visualSeed.trim()}\n\n`;
     }
