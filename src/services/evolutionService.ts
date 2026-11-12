@@ -2184,7 +2184,36 @@ async function assembleWebBookCore(
         (error) => NON_RECOVERABLE_GEMINI_REASONS.has(detectGeminiFailureReason(error))
       );
 
-      const chapters: Chapter[] = results.flatMap((result) => (result.status === 'ok' ? [result.value] : []));
+      const rawChapters: Chapter[] = results.flatMap((result) => (result.status === 'ok' ? [result.value] : []));
+
+      // Filter out TOC hallucination chapters (short chapters whose content is just a list of other chapter titles)
+      const allChapterTitles = rawChapters.map((c) => c.title.toLowerCase().replace(/[\s:：、，,.\-—–_]+/g, ''));
+      const cleanedChapters = rawChapters.filter((ch) => {
+        const contentNorm = ch.content.toLowerCase().replace(/[\s:：、，,.\-—–_]+/g, '');
+        let hitCount = 0;
+        for (const t of allChapterTitles) {
+          if (t.length > 4 && contentNorm.includes(t)) {
+            hitCount++;
+          }
+        }
+        return !(hitCount >= 2 && ch.content.length < 350 && (ch.definitions?.length || 0) === 0 && (ch.subTopics?.length || 0) === 0);
+      });
+
+      // Deduplicate titles for final chapters so no two chapters in the WebBook have identical titles
+      const seenChapterTitleCount = new Map<string, number>();
+      const chapters: Chapter[] = (cleanedChapters.length > 0 ? cleanedChapters : rawChapters).map((ch) => {
+        const normKey = ch.title.toLowerCase().replace(/[\s:：、，,.\-—–_]+/g, '');
+        const count = seenChapterTitleCount.get(normKey) || 0;
+        seenChapterTitleCount.set(normKey, count + 1);
+        let finalTitle = ch.title;
+        if (count > 0) {
+          finalTitle = `${ch.title} (Part ${count + 1})`;
+        }
+        return {
+          ...ch,
+          title: finalTitle,
+        };
+      });
 
       if (chapters.length > 0) {
         // One failed chapter no longer discards the others. The book keeps every chapter that was written, and the

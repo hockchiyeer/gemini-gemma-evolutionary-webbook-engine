@@ -606,6 +606,38 @@ export function parseTxtContentToWebBook(fileName: string, text: string, modifie
     });
   }
 
+  // Filter out TOC hallucination chapters (short chapters whose content is just a list of other chapter titles)
+  const allParsedTitles = chapters.map((c) => c.title.toLowerCase().replace(/[\s:：、，,.\-—–_]+/g, ''));
+  const cleanedChapters = chapters.filter((ch) => {
+    const contentNorm = ch.content.toLowerCase().replace(/[\s:：、，,.\-—–_]+/g, '');
+    let hitCount = 0;
+    for (const t of allParsedTitles) {
+      if (t.length > 4 && contentNorm.includes(t)) {
+        hitCount++;
+      }
+    }
+    if (hitCount >= 2 && ch.content.length < 350 && ch.definitions.length === 0 && ch.subTopics.length === 0) {
+      return false;
+    }
+    return true;
+  });
+
+  // Ensure 100% unique chapter titles across the book
+  const seenTitleCount = new Map<string, number>();
+  const finalChapters = (cleanedChapters.length > 0 ? cleanedChapters : chapters).map((ch) => {
+    const normKey = ch.title.toLowerCase().replace(/[\s:：、，,.\-—–_]+/g, '');
+    const count = seenTitleCount.get(normKey) || 0;
+    seenTitleCount.set(normKey, count + 1);
+    let finalTitle = ch.title;
+    if (count > 0) {
+      finalTitle = `${ch.title} (Part ${count + 1})`;
+    }
+    return {
+      ...ch,
+      title: finalTitle,
+    };
+  });
+
   const timestamp = modifiedAt || Date.now();
   const id = `server-${fileName.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 
@@ -613,7 +645,7 @@ export function parseTxtContentToWebBook(fileName: string, text: string, modifie
     id,
     topic,
     timestamp,
-    chapters: chapters.length > 0 ? chapters : [{
+    chapters: finalChapters.length > 0 ? finalChapters : [{
       title: topic,
       content: text,
       visualSeed: topic,
