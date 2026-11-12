@@ -44,6 +44,15 @@ try {
   assert.equal(fs.readFileSync(result.filePath, "utf8"), sampleText);
   assert.equal(result.bytesWritten, Buffer.byteLength(sampleText, "utf8"));
 
+  // Custom non-txt extension should be coerced to .txt
+  const nonTxtAttempt = saveWebBookText({
+    topic: "Malicious Extension",
+    text: "should be txt",
+    fileName: "malicious.js",
+    dir: tempDir,
+  });
+  assert.ok(nonTxtAttempt.fileName.endsWith(".txt"), "custom fileName must end with .txt");
+
   // Path traversal attempt via custom fileName should be sanitized by path.basename
   const traversalAttempt = saveWebBookText({
     topic: "Malicious Traversal",

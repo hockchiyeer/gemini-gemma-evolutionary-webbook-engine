@@ -9,6 +9,12 @@ export const PERSISTED_BOOKS_DIR = path.resolve(process.cwd(), "saved_webbooks")
  * Sanitizes a topic title and timestamp into a safe file name across Windows and Linux.
  * Strips forbidden characters (/ \ : * ? " < > |), trims spaces, and limits length.
  */
+export const MAX_BODY_BYTES = 25 * 1024 * 1024; // 25 MB payload limit
+
+/**
+ * Sanitizes a topic title and timestamp into a safe file name across Windows and Linux.
+ * Strips forbidden characters (/ \ : * ? " < > |), trims spaces, limits length, and enforces .txt extension.
+ */
 export function sanitizeFileName(topic: string, timestamp?: number): string {
   const ts = typeof timestamp === "number" && Number.isFinite(timestamp) ? timestamp : Date.now();
   const dateStr = new Date(ts).toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -36,7 +42,12 @@ export function saveWebBookText(params: {
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  const rawFileName = params.fileName || sanitizeFileName(params.topic, params.timestamp);
+  let rawFileName = params.fileName || sanitizeFileName(params.topic, params.timestamp);
+  // Ensure extension is strictly .txt
+  if (!rawFileName.toLowerCase().endsWith(".txt")) {
+    rawFileName = `${rawFileName.replace(/\.[^/.]+$/, "")}.txt`;
+  }
+
   // Prevent directory traversal attacks
   const safeBaseName = path.basename(rawFileName);
   const filePath = path.join(targetDir, safeBaseName);
@@ -77,10 +88,25 @@ export function listPersistedWebBooks(dir: string = PERSISTED_BOOKS_DIR): Array<
 
 async function readJsonBody(req: IncomingMessage & { body?: any }): Promise<any> {
   if (req.body && typeof req.body === "object") return req.body;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+
+  // Check declared Content-Length header first
+  const contentLength = Number(req.headers["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    throw new Error(`Payload exceeds maximum size limit of ${MAX_BODY_BYTES} bytes`);
   }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of req) {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    totalBytes += buf.length;
+    if (totalBytes > MAX_BODY_BYTES) {
+      throw new Error(`Payload stream exceeded maximum size limit of ${MAX_BODY_BYTES} bytes`);
+    }
+    chunks.push(buf);
+  }
+
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw.trim()) return {};
   try {
@@ -125,7 +151,8 @@ export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR) 
         return;
       } catch (err: any) {
         console.error("Failed to persist webbook:", err);
-        sendJson(res, 500, { ok: false, error: err?.message || "Failed to persist webbook" });
+        const status = err?.message?.includes("exceeded maximum size limit") ? 413 : 500;
+        sendJson(res, status, { ok: false, error: err?.message || "Failed to persist webbook" });
         return;
       }
     }
@@ -144,8 +171,8 @@ export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR) 
     if (url.pathname === "/api/webbooks/file" && req.method === "GET") {
       try {
         const fileName = url.searchParams.get("name") || "";
-        if (!fileName || fileName.includes("/") || fileName.includes("\\") || fileName.includes("..")) {
-          sendJson(res, 400, { ok: false, error: "Invalid file name" });
+        if (!fileName || fileName.includes("/") || fileName.includes("\\") || fileName.includes("..") || !fileName.toLowerCase().endsWith(".txt")) {
+          sendJson(res, 400, { ok: false, error: "Invalid file name: only .txt files in saved_webbooks/ are accessible" });
           return;
         }
         const filePath = path.join(dir, path.basename(fileName));

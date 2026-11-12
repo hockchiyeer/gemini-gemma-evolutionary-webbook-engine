@@ -341,19 +341,33 @@ export function mergeHistoryBooks(...historyGroups: WebBook[][]): WebBook[] {
 }
 
 export function loadLocalHistoryBooks(): WebBook[] {
-  const savedHistory = localStorage.getItem(LOCAL_HISTORY_KEY);
-  if (!savedHistory) return [];
-
   try {
+    const savedHistory = localStorage.getItem(LOCAL_HISTORY_KEY);
+    if (!savedHistory) return [];
     return mergeHistoryBooks(JSON.parse(savedHistory) as WebBook[]);
   } catch (error) {
-    console.error('Failed to parse local history', error);
+    console.error('Failed to parse or load local history', error);
     return [];
   }
 }
 
 export function saveLocalHistoryBooks(history: WebBook[]): void {
-  localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(history));
+  try {
+    localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(history));
+  } catch (error: any) {
+    console.warn('localStorage save failed, trimming older entries to fit quota...', error);
+    // If storage is full (QuotaExceededError), keep trimming oldest items until it fits
+    let trimmed = [...history];
+    while (trimmed.length > 1) {
+      trimmed.pop();
+      try {
+        localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(trimmed));
+        return;
+      } catch {
+        // Continue trimming
+      }
+    }
+  }
 }
 
 /**
