@@ -42,14 +42,11 @@ export function saveWebBookText(params: {
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  let rawFileName = params.fileName || sanitizeFileName(params.topic, params.timestamp);
-  // Ensure extension is strictly .txt
-  if (!rawFileName.toLowerCase().endsWith(".txt")) {
-    rawFileName = `${rawFileName.replace(/\.[^/.]+$/, "")}.txt`;
-  }
-
-  // Prevent directory traversal attacks
-  const safeBaseName = path.basename(rawFileName);
+  const rawFileName = params.fileName || sanitizeFileName(params.topic, params.timestamp);
+  // Prevent directory traversal attacks, and keep the folder to plain .txt files whatever name the client asks for.
+  let safeBaseName = path.basename(rawFileName);
+  if (!safeBaseName.replace(/\.txt$/i, "").replace(/\./g, "")) safeBaseName = sanitizeFileName(params.topic, params.timestamp);
+  if (!/\.txt$/i.test(safeBaseName)) safeBaseName = `${safeBaseName}.txt`;
   const filePath = path.join(targetDir, safeBaseName);
 
   fs.writeFileSync(filePath, params.text, "utf8");
@@ -86,13 +83,18 @@ export function listPersistedWebBooks(dir: string = PERSISTED_BOOKS_DIR): Array<
   }
 }
 
-async function readJsonBody(req: IncomingMessage & { body?: any }): Promise<any> {
+/** Thrown when a request body is over the limit; carries the status so the handler does not have to match on message text. */
+export class PayloadTooLargeError extends Error {
+  statusCode = 413;
+}
+
+async function readJsonBody(req: IncomingMessage & { body?: any }, maxBytes: number = MAX_BODY_BYTES): Promise<any> {
   if (req.body && typeof req.body === "object") return req.body;
 
   // Check declared Content-Length header first
   const contentLength = Number(req.headers["content-length"]);
-  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-    throw new Error(`Payload exceeds maximum size limit of ${MAX_BODY_BYTES} bytes`);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new PayloadTooLargeError(`Payload exceeds maximum size limit of ${maxBytes} bytes`);
   }
 
   const chunks: Buffer[] = [];
@@ -101,8 +103,8 @@ async function readJsonBody(req: IncomingMessage & { body?: any }): Promise<any>
   for await (const chunk of req) {
     const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     totalBytes += buf.length;
-    if (totalBytes > MAX_BODY_BYTES) {
-      throw new Error(`Payload stream exceeded maximum size limit of ${MAX_BODY_BYTES} bytes`);
+    if (totalBytes > maxBytes) {
+      throw new PayloadTooLargeError(`Payload stream exceeded maximum size limit of ${maxBytes} bytes`);
     }
     chunks.push(buf);
   }
@@ -125,13 +127,14 @@ function sendJson(res: ServerResponse, statusCode: number, payload: unknown): vo
 /**
  * Middleware handling /api/webbooks/persist and /api/webbooks/list.
  */
-export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR) {
+export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR, options: { maxBodyBytes?: number } = {}) {
+  const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
   return async (req: IncomingMessage, res: ServerResponse, next: (err?: any) => void) => {
     const url = new URL(req.url || "/", "http://localhost");
 
     if (url.pathname === "/api/webbooks/persist" && req.method === "POST") {
       try {
-        const body = await readJsonBody(req);
+        const body = await readJsonBody(req, maxBodyBytes);
         const topic = String(body.topic || body.webBook?.topic || "webbook");
         const text = String(body.text || body.textContent || "");
         if (!text.trim()) {
@@ -150,9 +153,14 @@ export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR) 
         sendJson(res, 200, { ok: true, ...result });
         return;
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError || err?.statusCode === 413 || err?.message?.includes("exceed")) {
+          // Expected for an oversized upload: refuse it quietly and do not wait for the rest of the body.
+          res.setHeader("Connection", "close");
+          sendJson(res, 413, { ok: false, error: err?.message || "Payload exceeded maximum size limit" });
+          return;
+        }
         console.error("Failed to persist webbook:", err);
-        const status = err?.message?.includes("exceeded maximum size limit") ? 413 : 500;
-        sendJson(res, status, { ok: false, error: err?.message || "Failed to persist webbook" });
+        sendJson(res, 500, { ok: false, error: err?.message || "Failed to persist webbook" });
         return;
       }
     }

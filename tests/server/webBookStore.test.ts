@@ -74,4 +74,32 @@ try {
   } catch {}
 }
 
+// 4. Test middleware 413 status code for declared Content-Length overflow
+{
+  const middleware = (await import("../../server/webBookStore.ts")).createWebBookStoreMiddleware();
+  let statusCode = 0;
+  let responseData = "";
+  const req: any = {
+    url: "/api/webbooks/persist",
+    method: "POST",
+    headers: { "content-length": "30000000" }, // 30 MB > 25 MB
+  };
+  const res: any = {
+    setHeader() {},
+    end(data: string) {
+      responseData = data;
+    },
+    set statusCode(code: number) {
+      statusCode = code;
+    },
+    get statusCode() {
+      return statusCode;
+    },
+  };
+
+  await middleware(req, res, () => {});
+  assert.equal(statusCode, 413, "declared Content-Length > 25MB must return 413 Payload Too Large");
+  assert.ok(responseData.includes("exceeded maximum size limit"), "error payload must explain size limit");
+}
+
 console.log("webBookStore tests passed");

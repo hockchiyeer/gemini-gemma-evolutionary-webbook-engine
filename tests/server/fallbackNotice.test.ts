@@ -57,7 +57,16 @@ globals.fetch = async (input: unknown, init?: { body?: unknown }) => {
     return json({ text: '[]', candidates: [{ content: { parts: [{ text: '[]' }] } }] });
   }
   if (url.hostname === 'localhost') {
-    const payload = await buildGoogleSearchFallbackPayload(url.searchParams.get('query')!, url.searchParams.get('mode') as SearchFallbackMode);
+    let query = url.searchParams.get('query');
+    let mode = url.searchParams.get('mode') as SearchFallbackMode;
+    if (!query && init?.body) {
+      try {
+        const parsed = JSON.parse(String(init.body));
+        query = parsed.query;
+        mode = parsed.mode;
+      } catch {}
+    }
+    const payload = await buildGoogleSearchFallbackPayload(query!, mode);
     return json(payload);
   }
   if (url.hostname.endsWith('googleapis.com')) {

@@ -30,8 +30,7 @@ import {
   type WebBookSourceMode,
 } from '../types';
 import { buildWebBookTxtContent } from './exportService';
-
-const LOCAL_HISTORY_KEY = 'webbook_history';
+import { readLocalHistory, writeLocalHistory } from './localHistoryStorage';
 
 type PersistedSearchStatus = 'started' | 'complete' | 'failed';
 
@@ -45,14 +44,22 @@ interface PersistedSearchRecord {
   updatedAt?: unknown;
 }
 
+const getEnvVar = (name: string): string | undefined => {
+  try {
+    return (import.meta as any)?.env?.[name] ?? (typeof process !== 'undefined' ? process.env?.[name] : undefined);
+  } catch {
+    return typeof process !== 'undefined' ? process.env?.[name] : undefined;
+  }
+};
+
 const FIREBASE_CONFIG = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  apiKey: getEnvVar('VITE_FIREBASE_API_KEY'),
+  authDomain: getEnvVar('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: getEnvVar('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: getEnvVar('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: getEnvVar('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: getEnvVar('VITE_FIREBASE_APP_ID'),
+  measurementId: getEnvVar('VITE_FIREBASE_MEASUREMENT_ID'),
 };
 
 let firebaseApp: FirebaseApp | null = null;
@@ -342,9 +349,7 @@ export function mergeHistoryBooks(...historyGroups: WebBook[][]): WebBook[] {
 
 export function loadLocalHistoryBooks(): WebBook[] {
   try {
-    const savedHistory = localStorage.getItem(LOCAL_HISTORY_KEY);
-    if (!savedHistory) return [];
-    return mergeHistoryBooks(JSON.parse(savedHistory) as WebBook[]);
+    return mergeHistoryBooks(readLocalHistory() as WebBook[]);
   } catch (error) {
     console.error('Failed to parse or load local history', error);
     return [];
@@ -352,22 +357,7 @@ export function loadLocalHistoryBooks(): WebBook[] {
 }
 
 export function saveLocalHistoryBooks(history: WebBook[]): void {
-  try {
-    localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(history));
-  } catch (error: any) {
-    console.warn('localStorage save failed, trimming older entries to fit quota...', error);
-    // If storage is full (QuotaExceededError), keep trimming oldest items until it fits
-    let trimmed = [...history];
-    while (trimmed.length > 1) {
-      trimmed.pop();
-      try {
-        localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(trimmed));
-        return;
-      } catch {
-        // Continue trimming
-      }
-    }
-  }
+  writeLocalHistory(history);
 }
 
 /**
@@ -407,6 +397,110 @@ export async function fetchPersistedWebBooksFromServer(): Promise<Array<{ fileNa
     if (!res.ok) return [];
     const data = await res.json().catch(() => ({}));
     return Array.isArray(data?.files) ? data.files : [];
+  } catch {
+    return [];
+  }
+}
+
+export function parseTxtContentToWebBook(fileName: string, text: string, modifiedAt?: number): WebBook | null {
+  if (!text || !text.trim()) return null;
+  const lines = text.split('\n');
+  const firstLine = lines[0]?.trim() || '';
+  const topic = (firstLine || fileName.replace(/\.txt$/i, '').replace(/^[0-9T-]*_/, '').replace(/_/g, ' ')).trim();
+
+  const chapters: WebBook['chapters'] = [];
+  const chapterBlocks = text.split(/\n\n(?=(?:CHAPTER|第\s*\d+\s*章)\s*\d*[:：])/i);
+
+  for (let i = 0; i < chapterBlocks.length; i++) {
+    const block = chapterBlocks[i].trim();
+    if (!/^(?:CHAPTER|第\s*\d+\s*章)\s*\d*[:：]/i.test(block)) {
+      continue;
+    }
+    const firstLineEnd = block.indexOf('\n');
+    const headerLine = firstLineEnd !== -1 ? block.slice(0, firstLineEnd).trim() : block;
+    const colonIdx = headerLine.indexOf(':') !== -1 ? headerLine.indexOf(':') : headerLine.indexOf('：');
+    const title = colonIdx !== -1 ? headerLine.slice(colonIdx + 1).trim() : headerLine;
+
+    const rest = firstLineEnd !== -1 ? block.slice(firstLineEnd).trim() : '';
+
+    const definitions: NonNullable<WebBook['chapters'][0]['definitions']> = [];
+    const defMatch = rest.match(/(?:CORE CONCEPTS|核心概念)[:：]?\n([\s\S]*?)(?=(?:\n\s*(?:SUB-TOPICS|子主题|SOURCES|来源))|$)/i);
+    if (defMatch) {
+      const defLines = defMatch[1].split('\n').filter((l) => l.trim().startsWith('-'));
+      for (const dl of defLines) {
+        const m = dl.trim().replace(/^- /, '').match(/^(.*?): (.*)$/);
+        if (m) definitions.push({ term: m[1].trim(), description: m[2].trim(), sourceUrl: '' });
+      }
+    }
+
+    const subTopics: NonNullable<WebBook['chapters'][0]['subTopics']> = [];
+    const subMatch = rest.match(/(?:SUB-TOPICS|子主题)[:：]?\n([\s\S]*?)(?=(?:\n\s*(?:SOURCES|来源))|$)/i);
+    if (subMatch) {
+      const subLines = subMatch[1].split('\n').filter((l) => l.trim().startsWith('-'));
+      for (const sl of subLines) {
+        const m = sl.trim().replace(/^- /, '').match(/^(.*?): (.*)$/);
+        if (m) subTopics.push({ title: m[1].trim(), summary: m[2].trim(), sourceUrl: '' });
+      }
+    }
+
+    const contentText = rest.split(/(?:CORE CONCEPTS|核心概念|SUB-TOPICS|子主题|SOURCES|来源)[:：]/i)[0].replace(/^=+\n/m, '').trim();
+
+    chapters.push({
+      title: title || `Chapter ${chapters.length + 1}`,
+      content: contentText || rest.slice(0, 500),
+      visualSeed: title,
+      definitions,
+      subTopics,
+      sourceUrls: [],
+    });
+  }
+
+  const timestamp = modifiedAt || Date.now();
+  const id = `server-${fileName.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+
+  return {
+    id,
+    topic,
+    timestamp,
+    chapters: chapters.length > 0 ? chapters : [{
+      title: topic,
+      content: text,
+      visualSeed: topic,
+      definitions: [],
+      subTopics: [],
+      sourceUrls: [],
+    }],
+    sourceMode: 'fallback_search',
+  };
+}
+
+/**
+ * Hydrates WebBooks from .txt files stored on the server saved_webbooks/ directory.
+ * Ensures books are restored on browser page refresh even when localStorage is empty.
+ */
+export async function loadServerPersistedWebBooks(): Promise<WebBook[]> {
+  try {
+    const files = await fetchPersistedWebBooksFromServer();
+    if (files.length === 0) return [];
+
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost:3000';
+    const books: WebBook[] = [];
+
+    for (const file of files) {
+      try {
+        const res = await fetch(`${origin}/api/webbooks/file?name=${encodeURIComponent(file.fileName)}`);
+        if (!res.ok) continue;
+        const text = await res.text();
+        const parsed = parseTxtContentToWebBook(file.fileName, text, file.modifiedAt);
+        if (parsed) {
+          books.push(parsed);
+        }
+      } catch {
+        // Continue loading remaining files
+      }
+    }
+
+    return books;
   } catch {
     return [];
   }

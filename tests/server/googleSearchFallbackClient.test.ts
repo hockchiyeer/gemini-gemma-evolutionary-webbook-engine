@@ -76,13 +76,15 @@ async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
   assert.deepEqual(await fetchGoogleSearchFallback('Quantum Physics'), validPayload);
 }
 
-// 5. Requests ask for JSON and bypass caches.
+// 5. Requests ask for JSON, use POST to avoid 414 URI Too Long, and bypass caches.
 {
   const { calls } = stubFetch([{ contentType: 'application/json', body: JSON.stringify(validPayload) }]);
   await fetchGoogleSearchFallback('Quantum Physics', { mode: 'duckduckgo' });
+  assert.equal(calls[0].init?.method, 'POST');
   assert.equal((calls[0].init?.headers as Record<string, string>).Accept, 'application/json');
+  assert.equal((calls[0].init?.headers as Record<string, string>)['Content-Type'], 'application/json');
   assert.equal(calls[0].init?.cache, 'no-store');
-  assert.equal(new URL(calls[0].url).searchParams.get('mode'), 'duckduckgo');
+  assert.deepEqual(JSON.parse(calls[0].init?.body as string), { query: 'Quantum Physics', mode: 'duckduckgo' });
 }
 
 // 6. Existing contract: 503 JSON error keeps the server-provided message (Cypress "transport failure" scenario).

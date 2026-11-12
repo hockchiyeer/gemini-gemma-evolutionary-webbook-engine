@@ -102,14 +102,20 @@ export async function fetchGoogleSearchFallback(
 
   for (let attempt = 1; attempt <= FALLBACK_FETCH_ATTEMPTS; attempt += 1) {
     try {
-      const requestUrl = new URL(SEARCH_FALLBACK_ROUTE, getFallbackRequestBase());
-      requestUrl.searchParams.set('query', query);
-      requestUrl.searchParams.set('mode', options.mode);
+      const endpoint = `${getFallbackRequestBase()}${SEARCH_FALLBACK_ROUTE}`;
 
       // Asking for JSON explicitly stops many dev servers, proxies and auth gateways from
-      // answering an API call with their HTML page, and no-store avoids a cached HTML reply.
-      const response = await fetch(requestUrl.toString(), {
-        headers: { Accept: 'application/json' },
+      // answering an API call with their HTML page, and POST prevents 414 URI Too Long for long queries.
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          mode: options.mode,
+        }),
         cache: 'no-store',
       });
       const contentType = response.headers.get('content-type') || '';

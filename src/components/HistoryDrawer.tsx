@@ -61,21 +61,38 @@ export function HistoryDrawer({
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {liveRun && (
-                <div className="bg-[#141414] text-[#E4E3E0] border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,0.35)]">
-                  <div className="flex items-center gap-2 text-[9px] uppercase font-mono tracking-wider opacity-80 mb-2">
-                    {!liveRun.outcome && <Loader2 size={12} className="animate-spin" />}
-                    {liveRun.outcome ? 'Latest generation' : 'Generation in progress'}
+                <div
+                  onClick={onViewLive}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onViewLive?.();
+                    }
+                  }}
+                  title="Click to return to main page with webbook in progress"
+                  className="bg-[#141414] text-[#E4E3E0] border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,0.35)] cursor-pointer hover:bg-[#222222] hover:translate-x-0.5 hover:translate-y-0.5 transition-all group relative select-none"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-[9px] uppercase font-mono tracking-wider opacity-80">
+                      {!liveRun.outcome && <Loader2 size={12} className="animate-spin text-blue-400" />}
+                      {liveRun.outcome ? (liveRun.outcome === 'complete' ? 'Latest generation ready' : 'Latest generation failed') : 'Generation in progress'}
+                    </div>
+                    {isViewingLive && (
+                      <span className="text-[9px] font-mono bg-white/10 px-1.5 py-0.5 rounded text-white font-semibold">
+                        Active
+                      </span>
+                    )}
                   </div>
-                  <h3 className="font-serif italic font-bold text-lg leading-tight mb-1">{liveRun.topic}</h3>
+                  <h3 className="font-serif italic font-bold text-lg leading-tight mb-1 text-white group-hover:text-white transition-colors">{liveRun.topic}</h3>
                   <p className="text-[10px] uppercase tracking-wider opacity-70 mb-3">{liveRun.statusLabel}</p>
-                  <button
-                    onClick={onViewLive}
-                    disabled={isViewingLive}
-                    className="text-[10px] uppercase font-bold flex items-center gap-1 hover:underline disabled:opacity-60 disabled:no-underline"
-                  >
-                    {isViewingLive ? 'Currently showing' : liveRun.outcome === 'complete' ? 'View new book' : 'Switch to live generation'}
-                    {!isViewingLive && <ChevronRight size={12} />}
-                  </button>
+                  <div className="flex items-center justify-between pt-2 border-t border-white/15">
+                    <span className="text-[10px] uppercase font-bold flex items-center gap-1 group-hover:underline text-white">
+                      {isViewingLive ? 'Return to live generation page' : liveRun.outcome === 'complete' ? 'View new book' : 'Switch to live generation'}
+                    </span>
+                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform text-white" />
+                  </div>
                 </div>
               )}
               {history.length === 0 ? (

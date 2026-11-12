@@ -15,6 +15,7 @@ import {
   failPersistedSearch,
   loadLocalHistoryBooks,
   loadPersistedWebBooks,
+  loadServerPersistedWebBooks,
   mergeHistoryBooks,
   persistWebBookTextToServer,
   saveLocalHistoryBooks,
@@ -111,11 +112,17 @@ export function useWebBookEngine() {
 
     const syncPersistedHistory = async () => {
       try {
-        const persistedHistory = await loadPersistedWebBooks();
-        if (!isMounted || persistedHistory.length === 0) return;
-        setHistory((previousHistory) => mergeHistoryBooks(previousHistory, persistedHistory));
+        const [persistedHistory, serverDiskHistory] = await Promise.all([
+          loadPersistedWebBooks().catch(() => []),
+          loadServerPersistedWebBooks().catch(() => []),
+        ]);
+        if (!isMounted) return;
+        const combined = [...persistedHistory, ...serverDiskHistory];
+        if (combined.length > 0) {
+          setHistory((previousHistory) => mergeHistoryBooks(previousHistory, combined));
+        }
       } catch (persistenceError) {
-        console.error('Failed to load Firebase history', persistenceError);
+        console.error('Failed to load persisted history', persistenceError);
       }
     };
 
