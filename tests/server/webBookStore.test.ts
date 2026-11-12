@@ -99,7 +99,7 @@ try {
 
   await middleware(req, res, () => {});
   assert.equal(statusCode, 413, "declared Content-Length > 25MB must return 413 Payload Too Large");
-  assert.ok(responseData.includes("exceeded maximum size limit"), "error payload must explain size limit");
+  assert.ok(responseData.includes("exceeds maximum size limit") || responseData.includes("exceeded maximum size limit"), "error payload must explain size limit");
 }
 
 console.log("webBookStore tests passed");

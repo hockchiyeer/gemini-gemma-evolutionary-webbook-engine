@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { LOCAL_HISTORY_KEY, readLocalHistory, writeLocalHistory } from '../../src/services/localHistoryStorage.ts';
-import { parseTxtContentToWebBook } from '../../src/services/historyService.ts';
+import { dropKnownServerBooks, parseTxtContentToWebBook } from '../../src/services/historyService.ts';
+import { buildWebBookTxtContent } from '../../src/services/exportService.ts';
+import type { WebBook } from '../../src/types.ts';
 
 console.warn = () => {};
 console.error = () => {};
@@ -98,4 +101,149 @@ SUB-TOPICS:
   assert.equal(parsed.chapters[0].subTopics[0].title, 'Subtopic 1');
 }
 
+// --- 6. dropKnownServerBooks: Deduplication and newest file retention ----------------------------------------------------
+{
+  const localA: WebBook = {
+    id: 'local-1',
+    topic: 'Malaysia Politics',
+    timestamp: 1000,
+    chapters: [{ title: 'Overview', content: 'Detailed rich content', visualSeed: 'img', definitions: [], subTopics: [], sourceUrls: [] }],
+  };
+
+  const serverOlderA: WebBook = {
+    id: 'server-2026-01-01_Malaysia_Politics',
+    topic: 'Malaysia Politics',
+    timestamp: 500,
+    chapters: [{ title: 'Overview', content: 'Old server content', visualSeed: 'img', definitions: [], subTopics: [], sourceUrls: [] }],
+  };
+
+  const serverNewerA: WebBook = {
+    id: 'server-2026-01-02_Malaysia_Politics',
+    topic: 'Malaysia politics ', // trailing space, different case
+    timestamp: 1500,
+    chapters: [{ title: 'Overview', content: 'Newer server content', visualSeed: 'img', definitions: [], subTopics: [], sourceUrls: [] }],
+  };
+
+  const serverB1: WebBook = {
+    id: 'server-2026-01-01_Quantum_Computing',
+    topic: 'Quantum Computing',
+    timestamp: 800,
+    chapters: [{ title: 'Intro', content: 'Server v1', visualSeed: 'img', definitions: [], subTopics: [], sourceUrls: [] }],
+  };
+
+  const serverB2: WebBook = {
+    id: 'server-2026-01-03_Quantum_Computing',
+    topic: 'quantum computing',
+    timestamp: 1200,
+    chapters: [{ title: 'Intro', content: 'Server v2', visualSeed: 'img', definitions: [], subTopics: [], sourceUrls: [] }],
+  };
+
+  // Case A: server books for topic already in knownBooks (localA) are dropped
+  // Case B: duplicate server books for new topic (Quantum Computing) are deduped to only keep newest (serverB2)
+  const result = dropKnownServerBooks([localA], [serverOlderA, serverNewerA, serverB1, serverB2]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, serverB2.id);
+  assert.equal(result[0].timestamp, 1200);
+
+  // If no known books, both newest topics are kept
+  const noKnownResult = dropKnownServerBooks([], [serverOlderA, serverNewerA, serverB1, serverB2]);
+  assert.equal(noKnownResult.length, 2);
+  const ids = new Set(noKnownResult.map((b) => b.id));
+  assert.ok(ids.has(serverNewerA.id));
+  assert.ok(ids.has(serverB2.id));
+}
+
+// --- 7. Multi-locale round-trip: buildWebBookTxtContent -> parseTxtContentToWebBook -------------------------------------
+{
+  const locales: Array<{ lang: string; topic: string; ch1: string; ch2: string; term: string; sub: string; sourceTitle: string }> = [
+    {
+      lang: 'en',
+      topic: 'Artificial Intelligence Evolution',
+      ch1: 'Foundations and History',
+      ch2: 'Modern Architectures',
+      term: 'Neural Network',
+      sub: 'Deep Learning',
+      sourceTitle: 'AI Research Journal',
+    },
+    {
+      lang: 'zh-Hans',
+      topic: '马来西亚羽毛球复兴之路',
+      ch1: '青训体系改革',
+      ch2: '职业化运营与国际竞争',
+      term: '梯队建设',
+      sub: '科学化训练',
+      sourceTitle: '羽毛球运动期刊',
+    },
+    {
+      lang: 'ja',
+      topic: '日本の人工知能研究の現在',
+      ch1: '自然言語処理の進化',
+      ch2: 'ロボティクスと社会実装',
+      term: '深層学習',
+      sub: 'トランスフォーマー',
+      sourceTitle: '日本ロボット学会誌',
+    },
+  ];
+
+  for (const testCase of locales) {
+    const original: WebBook = {
+      id: `test-${testCase.lang}`,
+      topic: testCase.topic,
+      timestamp: 1773000000000,
+      chapters: [
+        {
+          title: testCase.ch1,
+          content: `Content of chapter 1 in ${testCase.lang}.\nSecond paragraph of chapter 1.`,
+          visualSeed: `${testCase.ch1} visual representation`,
+          definitions: [{ term: testCase.term, description: `Definition of ${testCase.term}`, sourceUrl: '' }],
+          subTopics: [{ title: testCase.sub, summary: `Summary of ${testCase.sub}`, sourceUrl: '' }],
+          sourceUrls: [{ title: testCase.sourceTitle, url: 'https://example.com/paper1' }],
+        },
+        {
+          title: testCase.ch2,
+          content: `Content of chapter 2 in ${testCase.lang}.`,
+          visualSeed: `${testCase.ch2} visual representation`,
+          definitions: [],
+          subTopics: [],
+          sourceUrls: ['https://example.com/paper2'],
+        },
+      ],
+    };
+
+    const exportedTxt = buildWebBookTxtContent(original);
+    const parsed = parseTxtContentToWebBook(`2026-11-12_${testCase.topic}.txt`, exportedTxt, 1773000000000);
+
+    assert.ok(parsed !== null, `Failed to parse exported txt for locale ${testCase.lang}`);
+    assert.equal(parsed.topic, testCase.topic.toUpperCase());
+    assert.equal(parsed.chapters.length, 2, `Expected 2 chapters for ${testCase.lang}, got ${parsed.chapters.length}`);
+    assert.equal(parsed.chapters[0].title, testCase.ch1);
+    assert.equal(parsed.chapters[1].title, testCase.ch2);
+    assert.ok(parsed.chapters[0].content.includes(`Content of chapter 1 in ${testCase.lang}`));
+    assert.equal(parsed.chapters[0].visualSeed, `${testCase.ch1} visual representation`);
+    assert.equal(parsed.chapters[0].definitions.length, 1);
+    assert.equal(parsed.chapters[0].definitions[0].term, testCase.term);
+    assert.equal(parsed.chapters[0].subTopics.length, 1);
+    assert.equal(parsed.chapters[0].subTopics[0].title, testCase.sub);
+    assert.equal(parsed.chapters[0].sourceUrls.length, 1);
+    const src = parsed.chapters[0].sourceUrls[0];
+    assert.equal(typeof src === 'object' ? src.url : src, 'https://example.com/paper1');
+  }
+}
+
+// --- 8. Parse real saved .txt file on disk (6 chapters, sources, no TOC hallucination) -----------------------------------
+{
+  const realFilePath = 'saved_webbooks/2026-11-12T05-48-23_马来西亚华羽毛球水平复兴之路刍议.txt';
+  if (fs.existsSync(realFilePath)) {
+    const rawText = fs.readFileSync(realFilePath, 'utf-8');
+    const parsed = parseTxtContentToWebBook('2026-11-12T05-48-23_马来西亚华羽毛球水平复兴之路刍议.txt', rawText, 1773000000000);
+    assert.ok(parsed !== null);
+    assert.equal(parsed.chapters.length, 6, `Expected exactly 6 chapters, got ${parsed.chapters.length}`);
+    // Ensure Table of Contents is not counted as a chapter
+    assert.ok(!parsed.chapters.some((ch) => /目录|目錄|Table of Contents/i.test(ch.title)));
+    // Ensure sources are extracted on chapter 1
+    assert.ok(parsed.chapters[0].sourceUrls.length > 0, 'Expected parsed source URLs on chapter 1');
+  }
+}
+
 console.log('localHistoryStorage tests passed');
+

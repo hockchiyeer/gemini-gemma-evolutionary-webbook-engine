@@ -12,6 +12,7 @@ import {
   completePersistedSearch,
   createPersistedSearch,
   deletePersistedSearch,
+  dropKnownServerBooks,
   failPersistedSearch,
   loadLocalHistoryBooks,
   loadPersistedWebBooks,
@@ -117,10 +118,11 @@ export function useWebBookEngine() {
           loadServerPersistedWebBooks().catch(() => []),
         ]);
         if (!isMounted) return;
-        const combined = [...persistedHistory, ...serverDiskHistory];
-        if (combined.length > 0) {
-          setHistory((previousHistory) => mergeHistoryBooks(previousHistory, combined));
-        }
+        setHistory((previousHistory) => {
+          const known = mergeHistoryBooks(previousHistory, persistedHistory);
+          const serverNew = dropKnownServerBooks(known, serverDiskHistory);
+          return serverNew.length > 0 ? mergeHistoryBooks(known, serverNew) : known;
+        });
       } catch (persistenceError) {
         console.error('Failed to load persisted history', persistenceError);
       }

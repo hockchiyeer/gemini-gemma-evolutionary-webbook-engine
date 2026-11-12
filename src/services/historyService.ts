@@ -31,6 +31,7 @@ import {
 } from '../types';
 import { buildWebBookTxtContent } from './exportService';
 import { readLocalHistory, writeLocalHistory } from './localHistoryStorage';
+import { DICTIONARIES } from './exportLabels';
 
 type PersistedSearchStatus = 'started' | 'complete' | 'failed';
 
@@ -402,56 +403,145 @@ export async function fetchPersistedWebBooksFromServer(): Promise<Array<{ fileNa
   }
 }
 
+const ALL_TOC_LABELS = new Set<string>();
+const ALL_VISUAL_LABELS = new Set<string>();
+const ALL_CONCEPTS_LABELS = new Set<string>();
+const ALL_SUBTOPICS_LABELS = new Set<string>();
+const ALL_SOURCES_LABELS = new Set<string>();
+
+for (const d of Object.values(DICTIONARIES)) {
+  ALL_TOC_LABELS.add(d.tableOfContents.toLowerCase());
+  ALL_VISUAL_LABELS.add(d.visualConcept.toLowerCase());
+  ALL_CONCEPTS_LABELS.add(d.coreConcepts.toLowerCase());
+  ALL_SUBTOPICS_LABELS.add(d.subTopics.toLowerCase());
+  ALL_SOURCES_LABELS.add(d.sources.toLowerCase());
+}
+
+function matchSectionHeader(line: string): { type: 'visual'; value?: string } | { type: 'concepts' | 'subtopics' | 'sources' } | null {
+  const trimmed = line.trim();
+  const lower = trimmed.toLowerCase();
+
+  for (const label of ALL_VISUAL_LABELS) {
+    if (lower.startsWith(label + ':') || lower.startsWith(label + '：')) {
+      const colonIdx = line.indexOf(':') !== -1 ? line.indexOf(':') : line.indexOf('：');
+      return { type: 'visual', value: line.slice(colonIdx + 1).trim() };
+    }
+  }
+
+  const withoutColon = lower.replace(/[:：]\s*$/, '').trim();
+  if (ALL_CONCEPTS_LABELS.has(withoutColon)) return { type: 'concepts' };
+  if (ALL_SUBTOPICS_LABELS.has(withoutColon)) return { type: 'subtopics' };
+  if (ALL_SOURCES_LABELS.has(withoutColon)) return { type: 'sources' };
+
+  return null;
+}
+
 export function parseTxtContentToWebBook(fileName: string, text: string, modifiedAt?: number): WebBook | null {
   if (!text || !text.trim()) return null;
   const lines = text.split('\n');
   const firstLine = lines[0]?.trim() || '';
   const topic = (firstLine || fileName.replace(/\.txt$/i, '').replace(/^[0-9T-]*_/, '').replace(/_/g, ' ')).trim();
 
-  const chapters: WebBook['chapters'] = [];
-  const chapterBlocks = text.split(/\n\n(?=(?:CHAPTER|第\s*\d+\s*章)\s*\d*[:：])/i);
+  // Find all underlined headings: heading line followed by ===...
+  const headingRegex = /(?:^|\n)([^\n]+)\n={3,}(?:\n|$)/g;
+  const sections: Array<{ heading: string; start: number; end: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = headingRegex.exec(text)) !== null) {
+    sections.push({ heading: m[1].trim(), start: m.index, end: headingRegex.lastIndex });
+  }
 
-  for (let i = 0; i < chapterBlocks.length; i++) {
-    const block = chapterBlocks[i].trim();
-    if (!/^(?:CHAPTER|第\s*\d+\s*章)\s*\d*[:：]/i.test(block)) {
+  const chapters: WebBook['chapters'] = [];
+  for (let i = 0; i < sections.length; i++) {
+    const headerLine = sections[i].heading;
+    // Skip Table of Contents heading and anything before actual chapters
+    if (ALL_TOC_LABELS.has(headerLine.toLowerCase())) {
       continue;
     }
-    const firstLineEnd = block.indexOf('\n');
-    const headerLine = firstLineEnd !== -1 ? block.slice(0, firstLineEnd).trim() : block;
-    const colonIdx = headerLine.indexOf(':') !== -1 ? headerLine.indexOf(':') : headerLine.indexOf('：');
-    const title = colonIdx !== -1 ? headerLine.slice(colonIdx + 1).trim() : headerLine;
 
-    const rest = firstLineEnd !== -1 ? block.slice(firstLineEnd).trim() : '';
+    const colonIdx = headerLine.indexOf(':') !== -1 ? headerLine.indexOf(':') : headerLine.indexOf('：');
+    let title = colonIdx !== -1 ? headerLine.slice(colonIdx + 1).trim() : headerLine.trim();
+    if (colonIdx === -1) {
+      title = title.replace(/^(?:CHAPTER|BAB|CAPÍTULO|CAPITULO|CHAPITRE|KAPITEL|第\s*\d+\s*章|제\s*\d+\s*장)\s*\d*[:：\s]\s*/i, '').trim();
+    }
+    if (!title) title = headerLine.trim();
+
+    const bodyStart = sections[i].end;
+    const bodyEnd = i + 1 < sections.length ? sections[i + 1].start : text.length;
+    const body = text.slice(bodyStart, bodyEnd).trim();
+    const bodyLines = body.split('\n');
+
+    let currentSection: 'content' | 'concepts' | 'subtopics' | 'sources' = 'content';
+    const contentLines: string[] = [];
+    const defLines: string[] = [];
+    const subTopicLines: string[] = [];
+    const sourceLines: string[] = [];
+    let visualSeed = title;
+
+    for (const rawLine of bodyLines) {
+      const line = rawLine.trim();
+      const header = matchSectionHeader(line);
+      if (header) {
+        if (header.type === 'visual') {
+          if (header.value) visualSeed = header.value;
+        } else {
+          currentSection = header.type;
+        }
+        continue;
+      }
+
+      if (currentSection === 'content') {
+        contentLines.push(rawLine);
+      } else if (currentSection === 'concepts') {
+        if (line.startsWith('-')) defLines.push(line);
+      } else if (currentSection === 'subtopics') {
+        if (line.startsWith('-')) subTopicLines.push(line);
+      } else if (currentSection === 'sources') {
+        if (line.startsWith('-')) sourceLines.push(line);
+      }
+    }
 
     const definitions: NonNullable<WebBook['chapters'][0]['definitions']> = [];
-    const defMatch = rest.match(/(?:CORE CONCEPTS|核心概念)[:：]?\n([\s\S]*?)(?=(?:\n\s*(?:SUB-TOPICS|子主题|SOURCES|来源))|$)/i);
-    if (defMatch) {
-      const defLines = defMatch[1].split('\n').filter((l) => l.trim().startsWith('-'));
-      for (const dl of defLines) {
-        const m = dl.trim().replace(/^- /, '').match(/^(.*?): (.*)$/);
-        if (m) definitions.push({ term: m[1].trim(), description: m[2].trim(), sourceUrl: '' });
+    for (const dl of defLines) {
+      const clean = dl.replace(/^-+\s*/, '').trim();
+      const match = clean.match(/^(.*?)[：:]\s*(.*)$/);
+      if (match) {
+        definitions.push({ term: match[1].trim(), description: match[2].trim(), sourceUrl: '' });
       }
     }
 
     const subTopics: NonNullable<WebBook['chapters'][0]['subTopics']> = [];
-    const subMatch = rest.match(/(?:SUB-TOPICS|子主题)[:：]?\n([\s\S]*?)(?=(?:\n\s*(?:SOURCES|来源))|$)/i);
-    if (subMatch) {
-      const subLines = subMatch[1].split('\n').filter((l) => l.trim().startsWith('-'));
-      for (const sl of subLines) {
-        const m = sl.trim().replace(/^- /, '').match(/^(.*?): (.*)$/);
-        if (m) subTopics.push({ title: m[1].trim(), summary: m[2].trim(), sourceUrl: '' });
+    for (const st of subTopicLines) {
+      const clean = st.replace(/^-+\s*/, '').trim();
+      const match = clean.match(/^(.*?)[：:]\s*(.*)$/);
+      if (match) {
+        subTopics.push({ title: match[1].trim(), summary: match[2].trim(), sourceUrl: '' });
       }
     }
 
-    const contentText = rest.split(/(?:CORE CONCEPTS|核心概念|SUB-TOPICS|子主题|SOURCES|来源)[:：]/i)[0].replace(/^=+\n/m, '').trim();
+    const sourceUrls: NonNullable<WebBook['chapters'][0]['sourceUrls']> = [];
+    for (const sl of sourceLines) {
+      const clean = sl.replace(/^-+\s*/, '').trim();
+      const urlMatch = clean.match(/^(.*?)\s*-\s*(https?:\/\/\S+)$/);
+      if (urlMatch) {
+        const titlePart = urlMatch[1].trim();
+        const url = urlMatch[2].trim();
+        const hostMatch = titlePart.match(/^(.*?)\s*\(([^)]+)\)$/);
+        const cleanTitle = hostMatch ? hostMatch[1].trim() : titlePart;
+        sourceUrls.push({ title: cleanTitle || url, url });
+      } else if (/^https?:\/\/\S+$/.test(clean)) {
+        sourceUrls.push({ title: clean, url: clean });
+      } else if (clean) {
+        sourceUrls.push(clean);
+      }
+    }
 
     chapters.push({
-      title: title || `Chapter ${chapters.length + 1}`,
-      content: contentText || rest.slice(0, 500),
-      visualSeed: title,
+      title,
+      content: contentLines.join('\n').trim(),
+      visualSeed,
       definitions,
       subTopics,
-      sourceUrls: [],
+      sourceUrls,
     });
   }
 
@@ -472,6 +562,43 @@ export function parseTxtContentToWebBook(fileName: string, text: string, modifie
     }],
     sourceMode: 'fallback_search',
   };
+}
+
+/**
+ * Deduplicates rehydrated server books against existing (local/cloud) history:
+ * 1. Keeps only the newest server book per topic.
+ * 2. If a book with the same topic (or ID) is already in knownBooks, drops the server copy
+ *    to preserve the richer local copy and avoid duplicate entries in the History Drawer.
+ */
+export function dropKnownServerBooks(knownBooks: WebBook[], serverBooks: WebBook[]): WebBook[] {
+  const newestServerByTopic = new Map<string, WebBook>();
+  for (const book of serverBooks) {
+    if (!book || !book.topic) continue;
+    const key = book.topic.trim().toLowerCase();
+    const existing = newestServerByTopic.get(key);
+    if (!existing || (book.timestamp ?? 0) > (existing.timestamp ?? 0)) {
+      newestServerByTopic.set(key, book);
+    }
+  }
+
+  const knownTopics = new Set<string>();
+  const knownIds = new Set<string>();
+  for (const book of knownBooks) {
+    if (!book) continue;
+    if (book.id) knownIds.add(book.id);
+    if (book.topic) knownTopics.add(book.topic.trim().toLowerCase());
+  }
+
+  const result: WebBook[] = [];
+  for (const book of newestServerByTopic.values()) {
+    const key = book.topic.trim().toLowerCase();
+    if (knownTopics.has(key) || knownIds.has(book.id)) {
+      continue;
+    }
+    result.push(book);
+  }
+
+  return result;
 }
 
 /**

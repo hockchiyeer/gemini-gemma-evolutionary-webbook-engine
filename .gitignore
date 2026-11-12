@@ -38,3 +38,8 @@ tmp/
 models/
 *.gguf
 !tests/fixtures/tiny-random.gguf
+
+# Generated user books and exports
+saved_webbooks/
+exports/
+

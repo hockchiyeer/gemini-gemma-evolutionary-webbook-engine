@@ -61,27 +61,24 @@ export function HistoryDrawer({
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {liveRun && (
-                <div
+                <button
+                  type="button"
                   onClick={onViewLive}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onViewLive?.();
-                    }
-                  }}
                   title="Click to return to main page with webbook in progress"
-                  className="bg-[#141414] text-[#E4E3E0] border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,0.35)] cursor-pointer hover:bg-[#222222] hover:translate-x-0.5 hover:translate-y-0.5 transition-all group relative select-none"
+                  className="w-full text-left bg-[#141414] text-[#E4E3E0] border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,0.35)] cursor-pointer hover:bg-[#222222] hover:translate-x-0.5 hover:translate-y-0.5 active:translate-x-1 active:translate-y-1 transition-all group relative select-none block"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2 text-[9px] uppercase font-mono tracking-wider opacity-80">
                       {!liveRun.outcome && <Loader2 size={12} className="animate-spin text-blue-400" />}
                       {liveRun.outcome ? (liveRun.outcome === 'complete' ? 'Latest generation ready' : 'Latest generation failed') : 'Generation in progress'}
                     </div>
-                    {isViewingLive && (
-                      <span className="text-[9px] font-mono bg-white/10 px-1.5 py-0.5 rounded text-white font-semibold">
+                    {isViewingLive ? (
+                      <span className="text-[9px] font-mono bg-white/15 px-1.5 py-0.5 rounded text-white font-semibold uppercase tracking-wider">
                         Active
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-mono bg-blue-500/20 text-blue-300 border border-blue-500/40 px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider">
+                        In Background
                       </span>
                     )}
                   </div>
@@ -89,11 +86,11 @@ export function HistoryDrawer({
                   <p className="text-[10px] uppercase tracking-wider opacity-70 mb-3">{liveRun.statusLabel}</p>
                   <div className="flex items-center justify-between pt-2 border-t border-white/15">
                     <span className="text-[10px] uppercase font-bold flex items-center gap-1 group-hover:underline text-white">
-                      {isViewingLive ? 'Return to live generation page' : liveRun.outcome === 'complete' ? 'View new book' : 'Switch to live generation'}
+                      {isViewingLive ? 'Return to webbook in progress' : liveRun.outcome === 'complete' ? 'View new book' : 'Switch to webbook in progress'}
                     </span>
-                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform text-white" />
+                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform text-white shrink-0" />
                   </div>
-                </div>
+                </button>
               )}
               {history.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center opacity-30 text-center">

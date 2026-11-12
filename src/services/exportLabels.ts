@@ -787,7 +787,7 @@ const DE: Dictionary = {
   chaptersAndSections: (c, d) => `${c} Kapitel | ${d} Dokumentabschnitte`,
 };
 
-const DICTIONARIES: Record<BookLocale, Dictionary> = {
+export const DICTIONARIES: Record<BookLocale, Dictionary> = {
   en: EN,
   'zh-Hans': ZH_HANS,
   'zh-Hant': ZH_HANT,
