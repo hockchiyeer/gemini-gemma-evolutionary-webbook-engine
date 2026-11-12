@@ -102,4 +102,57 @@ try {
   assert.ok(responseData.includes("exceeds maximum size limit") || responseData.includes("exceeded maximum size limit"), "error payload must explain size limit");
 }
 
+// 5. Test DELETE endpoints for deleting individual webbook and clearing all
+{
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "webbook-delete-test-"));
+  try {
+    saveWebBookText({ topic: "Book 1", text: "Book 1\nText 1", fileName: "book1.txt", dir: testDir });
+    saveWebBookText({ topic: "Book 2", text: "Book 2\nText 2", fileName: "book2.txt", dir: testDir });
+    saveWebBookText({ topic: "Book 3", text: "Book 3\nText 3", fileName: "book3.txt", dir: testDir });
+    assert.equal(listPersistedWebBooks(testDir).length, 3);
+
+    const middleware = (await import("../../server/webBookStore.ts")).createWebBookStoreMiddleware(testDir);
+
+    const callApi = async (url: string, method: string) => {
+      let code = 0;
+      let body = "";
+      const req: any = { url, method, headers: {} };
+      const res: any = {
+        setHeader() {},
+        end(data: string) { body = data; },
+        set statusCode(c: number) { code = c; },
+        get statusCode() { return code; },
+      };
+      await middleware(req, res, () => {});
+      return { code, data: JSON.parse(body || "{}") };
+    };
+
+    // Delete single file
+    const res1 = await callApi("/api/webbooks/file?name=book1.txt", "DELETE");
+    assert.equal(res1.code, 200);
+    assert.equal(res1.data.ok, true);
+    assert.equal(res1.data.deletedCount, 1);
+    assert.equal(fs.existsSync(path.join(testDir, "book1.txt")), false);
+
+    // Reject path traversal attempt on delete
+    const resTraversal = await callApi("/api/webbooks/file?name=../evil.txt", "DELETE");
+    assert.equal(resTraversal.code, 400);
+
+    // Delete by topic
+    const resTopic = await callApi("/api/webbooks/file?topic=Book_2", "DELETE");
+    assert.equal(resTopic.code, 200);
+    assert.equal(fs.existsSync(path.join(testDir, "book2.txt")), false);
+
+    // Clear all remaining
+    const resAll = await callApi("/api/webbooks/all", "DELETE");
+    assert.equal(resAll.code, 200);
+    assert.equal(resAll.data.ok, true);
+    assert.equal(listPersistedWebBooks(testDir).length, 0);
+  } finally {
+    try {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
 console.log("webBookStore tests passed");

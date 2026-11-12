@@ -9,9 +9,11 @@ import {
 } from '../services/evolutionService';
 import {
   clearPersistedSearches,
+  clearServerPersistedWebBooks,
   completePersistedSearch,
   createPersistedSearch,
   deletePersistedSearch,
+  deleteServerPersistedWebBook,
   dropKnownServerBooks,
   failPersistedSearch,
   loadLocalHistoryBooks,
@@ -349,6 +351,7 @@ export function useWebBookEngine() {
   };
 
   const deleteHistoryItem = (id: string) => {
+    const targetBook = history.find((item) => item.id === id);
     setHistory((previousHistory) => previousHistory.filter((item) => item.id !== id));
     if (viewingItemRef.current?.id === id) {
       setViewingItem(null);
@@ -359,6 +362,10 @@ export function useWebBookEngine() {
 
     void deletePersistedSearch(id).catch((persistenceError) => {
       console.error('Failed to delete persisted history item', persistenceError);
+    });
+
+    void deleteServerPersistedWebBook({ id, topic: targetBook?.topic }).catch((serverError) => {
+      console.warn('Failed to delete server persisted webbook file', serverError);
     });
   };
 
@@ -375,6 +382,10 @@ export function useWebBookEngine() {
 
     void clearPersistedSearches().catch((persistenceError) => {
       console.error('Failed to clear persisted history', persistenceError);
+    });
+
+    void clearServerPersistedWebBooks().catch((serverError) => {
+      console.warn('Failed to clear server persisted webbooks', serverError);
     });
   };
 

@@ -20,19 +20,16 @@ import { getLiveRunLabel } from '../../src/components/LiveRunBanner';
   assert.equal(assembling.label, 'Assembling WebBook');
 }
 
-// 2. Button action label resolution based on viewing state and run outcome
-{
-  function getActionLabel(isViewingLive: boolean, outcome: 'complete' | 'failed' | null): string {
-    if (isViewingLive) return 'Return to webbook in progress';
-    if (outcome === 'complete') return 'View new book';
-    return 'Switch to webbook in progress';
-  }
+import { getHistoryDrawerActionLabel } from '../../src/components/HistoryDrawer';
 
-  assert.equal(getActionLabel(true, null), 'Return to webbook in progress');
-  assert.equal(getActionLabel(true, 'complete'), 'Return to webbook in progress');
-  assert.equal(getActionLabel(false, null), 'Switch to webbook in progress');
-  assert.equal(getActionLabel(false, 'complete'), 'View new book');
-  assert.equal(getActionLabel(false, 'failed'), 'Switch to webbook in progress');
+// 2. Button action label resolution based on viewing state and run outcome (tested directly on component helper)
+{
+  assert.equal(getHistoryDrawerActionLabel(true, null), 'Return to webbook in progress');
+  assert.equal(getHistoryDrawerActionLabel(true, 'complete'), 'View completed webbook');
+  assert.equal(getHistoryDrawerActionLabel(true, 'failed'), 'View failed run');
+  assert.equal(getHistoryDrawerActionLabel(false, null), 'Switch to webbook in progress');
+  assert.equal(getHistoryDrawerActionLabel(false, 'complete'), 'View new book');
+  assert.equal(getHistoryDrawerActionLabel(false, 'failed'), 'View failed run');
 
   // Verify that triggering onViewLive resets viewingItem and closes history
   let historyOpen = true;

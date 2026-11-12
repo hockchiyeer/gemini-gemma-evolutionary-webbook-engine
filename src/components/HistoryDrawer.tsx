@@ -3,6 +3,16 @@ import { AnimatePresence, motion } from 'motion/react';
 import { ChevronRight, Clock, History, Loader2, Trash2, X } from 'lucide-react';
 import type { WebBook } from '../types';
 
+export function getHistoryDrawerActionLabel(isViewingLive: boolean, outcome: 'complete' | 'failed' | null): string {
+  if (outcome === 'failed') {
+    return 'View failed run';
+  }
+  if (outcome === 'complete') {
+    return isViewingLive ? 'View completed webbook' : 'View new book';
+  }
+  return isViewingLive ? 'Return to webbook in progress' : 'Switch to webbook in progress';
+}
+
 interface HistoryDrawerProps {
   showHistory: boolean;
   history: WebBook[];
@@ -67,11 +77,11 @@ export function HistoryDrawer({
                   title="Click to return to main page with webbook in progress"
                   className="w-full text-left bg-[#141414] text-[#E4E3E0] border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,0.35)] cursor-pointer hover:bg-[#222222] hover:translate-x-0.5 hover:translate-y-0.5 active:translate-x-1 active:translate-y-1 transition-all group relative select-none block"
                 >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-[9px] uppercase font-mono tracking-wider opacity-80">
+                  <span className="flex items-center justify-between mb-2">
+                    <span className="flex items-center gap-2 text-[9px] uppercase font-mono tracking-wider opacity-80">
                       {!liveRun.outcome && <Loader2 size={12} className="animate-spin text-blue-400" />}
                       {liveRun.outcome ? (liveRun.outcome === 'complete' ? 'Latest generation ready' : 'Latest generation failed') : 'Generation in progress'}
-                    </div>
+                    </span>
                     {isViewingLive ? (
                       <span className="text-[9px] font-mono bg-white/15 px-1.5 py-0.5 rounded text-white font-semibold uppercase tracking-wider">
                         Active
@@ -81,15 +91,15 @@ export function HistoryDrawer({
                         In Background
                       </span>
                     )}
-                  </div>
-                  <h3 className="font-serif italic font-bold text-lg leading-tight mb-1 text-white group-hover:text-white transition-colors">{liveRun.topic}</h3>
-                  <p className="text-[10px] uppercase tracking-wider opacity-70 mb-3">{liveRun.statusLabel}</p>
-                  <div className="flex items-center justify-between pt-2 border-t border-white/15">
+                  </span>
+                  <span className="block font-serif italic font-bold text-lg leading-tight mb-1 text-white group-hover:text-white transition-colors">{liveRun.topic}</span>
+                  <span className="block text-[10px] uppercase tracking-wider opacity-70 mb-3">{liveRun.statusLabel}</span>
+                  <span className="flex items-center justify-between pt-2 border-t border-white/15">
                     <span className="text-[10px] uppercase font-bold flex items-center gap-1 group-hover:underline text-white">
-                      {isViewingLive ? 'Return to webbook in progress' : liveRun.outcome === 'complete' ? 'View new book' : 'Switch to webbook in progress'}
+                      {getHistoryDrawerActionLabel(isViewingLive, liveRun.outcome)}
                     </span>
                     <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform text-white shrink-0" />
-                  </div>
+                  </span>
                 </button>
               )}
               {history.length === 0 ? (

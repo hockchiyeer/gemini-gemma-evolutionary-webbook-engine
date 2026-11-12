@@ -403,6 +403,49 @@ export async function fetchPersistedWebBooksFromServer(): Promise<Array<{ fileNa
   }
 }
 
+/**
+ * Deletes a persisted WebBook text file from the server disk.
+ */
+export async function deleteServerPersistedWebBook(params: { fileName?: string; topic?: string; id?: string }): Promise<boolean> {
+  try {
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost:3000';
+    const query = new URLSearchParams();
+    if (params.fileName) {
+      query.set('name', params.fileName);
+    } else if (params.id && params.id.startsWith('server-')) {
+      const derived = params.id.replace(/^server-/, '');
+      query.set('name', `${derived}.txt`);
+    }
+    if (params.topic) {
+      query.set('topic', params.topic);
+    }
+
+    const res = await fetch(`${origin}/api/webbooks/file?${query.toString()}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Failed to delete server persisted webbook (non-fatal):', err);
+    return false;
+  }
+}
+
+/**
+ * Deletes all persisted WebBook text files from the server disk.
+ */
+export async function clearServerPersistedWebBooks(): Promise<boolean> {
+  try {
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost:3000';
+    const res = await fetch(`${origin}/api/webbooks/all`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Failed to clear server persisted webbooks (non-fatal):', err);
+    return false;
+  }
+}
+
 const ALL_TOC_LABELS = new Set<string>();
 const ALL_VISUAL_LABELS = new Set<string>();
 const ALL_CONCEPTS_LABELS = new Set<string>();
@@ -450,11 +493,18 @@ export function parseTxtContentToWebBook(fileName: string, text: string, modifie
     sections.push({ heading: m[1].trim(), start: m.index, end: headingRegex.lastIndex });
   }
 
+  const chapterPrefixRegex = /^(?:CHAPTER|BAB|CAPÍTULO|CAPITULO|CHAPITRE|KAPITEL|第\s*\d+\s*章|제\s*\d+\s*장)\b|^(?:第\s*\d+\s*章|제\s*\d+\s*장)/i;
+  const hasPrefixedChapters = sections.some((s) => !ALL_TOC_LABELS.has(s.heading.toLowerCase()) && chapterPrefixRegex.test(s.heading));
+
   const chapters: WebBook['chapters'] = [];
   for (let i = 0; i < sections.length; i++) {
     const headerLine = sections[i].heading;
     // Skip Table of Contents heading and anything before actual chapters
     if (ALL_TOC_LABELS.has(headerLine.toLowerCase())) {
+      continue;
+    }
+    // Prevent phantom chapters from body text followed by === when prefixed chapters exist
+    if (hasPrefixedChapters && !chapterPrefixRegex.test(headerLine)) {
       continue;
     }
 
@@ -528,10 +578,11 @@ export function parseTxtContentToWebBook(fileName: string, text: string, modifie
         const hostMatch = titlePart.match(/^(.*?)\s*\(([^)]+)\)$/);
         const cleanTitle = hostMatch ? hostMatch[1].trim() : titlePart;
         sourceUrls.push({ title: cleanTitle || url, url });
-      } else if (/^https?:\/\/\S+$/.test(clean)) {
-        sourceUrls.push({ title: clean, url: clean });
-      } else if (clean) {
-        sourceUrls.push(clean);
+      } else if (/https?:\/\/\S+/.test(clean)) {
+        const directUrlMatch = clean.match(/https?:\/\/\S+/);
+        const directUrl = directUrlMatch ? directUrlMatch[0] : clean;
+        const title = clean.replace(directUrl, '').replace(/^[-—:\s]+|[-—:\s]+$/g, '').trim() || directUrl;
+        sourceUrls.push({ title, url: directUrl });
       }
     }
 

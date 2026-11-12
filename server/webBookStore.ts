@@ -199,6 +199,78 @@ export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR, 
       }
     }
 
+    if ((url.pathname === "/api/webbooks/file" && req.method === "DELETE") || (url.pathname === "/api/webbooks/delete" && req.method === "POST")) {
+      try {
+        const fileName = url.searchParams.get("name") || "";
+        const topic = url.searchParams.get("topic") || "";
+        if (!fileName && !topic) {
+          sendJson(res, 400, { ok: false, error: "Missing name or topic parameter" });
+          return;
+        }
+
+        let deletedCount = 0;
+        if (fileName) {
+          if (fileName.includes("/") || fileName.includes("\\") || fileName.includes("..") || !fileName.toLowerCase().endsWith(".txt")) {
+            sendJson(res, 400, { ok: false, error: "Invalid file name: only .txt files in saved_webbooks/ can be deleted" });
+            return;
+          }
+          const filePath = path.join(dir, path.basename(fileName));
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            deletedCount++;
+          }
+        }
+
+        if (topic) {
+          const cleanTopic = topic.trim().toLowerCase();
+          const cleanTopicNorm = cleanTopic.replace(/[\s_-]+/g, "");
+          const entries = listPersistedWebBooks(dir);
+          for (const entry of entries) {
+            const filePath = path.join(dir, entry.fileName);
+            const entryNorm = entry.fileName.toLowerCase().replace(/[\s_-]+/g, "");
+            let matches = entryNorm.includes(cleanTopicNorm);
+            if (!matches && fs.existsSync(filePath)) {
+              try {
+                const header = fs.readFileSync(filePath, "utf8").slice(0, 200).split("\n")[0]?.trim().toLowerCase();
+                if (header === cleanTopic || header.replace(/[\s_-]+/g, "") === cleanTopicNorm) matches = true;
+              } catch {}
+            }
+            if (matches && fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              deletedCount++;
+            }
+          }
+        }
+
+        sendJson(res, 200, { ok: true, deletedCount });
+        return;
+      } catch (err: any) {
+        sendJson(res, 500, { ok: false, error: err?.message || "Failed to delete persisted webbook" });
+        return;
+      }
+    }
+
+    if ((url.pathname === "/api/webbooks/all" && (req.method === "DELETE" || req.method === "POST")) ||
+        (url.pathname === "/api/webbooks/files" && req.method === "DELETE") ||
+        (url.pathname === "/api/webbooks/clear" && req.method === "POST")) {
+      try {
+        const entries = listPersistedWebBooks(dir);
+        let deletedCount = 0;
+        for (const entry of entries) {
+          const filePath = path.join(dir, entry.fileName);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            deletedCount++;
+          }
+        }
+        sendJson(res, 200, { ok: true, deletedCount });
+        return;
+      } catch (err: any) {
+        sendJson(res, 500, { ok: false, error: err?.message || "Failed to clear persisted webbooks" });
+        return;
+      }
+    }
+
     next();
   };
 }

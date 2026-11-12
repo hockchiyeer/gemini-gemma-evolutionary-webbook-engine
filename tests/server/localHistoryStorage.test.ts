@@ -230,19 +230,16 @@ SUB-TOPICS:
   }
 }
 
-// --- 8. Parse real saved .txt file on disk (6 chapters, sources, no TOC hallucination) -----------------------------------
+// --- 8. Parse a real exported .txt (checked-in fixture, so this can never silently skip) ---
 {
-  const realFilePath = 'saved_webbooks/2026-11-12T05-48-23_马来西亚华羽毛球水平复兴之路刍议.txt';
-  if (fs.existsSync(realFilePath)) {
-    const rawText = fs.readFileSync(realFilePath, 'utf-8');
-    const parsed = parseTxtContentToWebBook('2026-11-12T05-48-23_马来西亚华羽毛球水平复兴之路刍议.txt', rawText, 1773000000000);
-    assert.ok(parsed !== null);
-    assert.equal(parsed.chapters.length, 6, `Expected exactly 6 chapters, got ${parsed.chapters.length}`);
-    // Ensure Table of Contents is not counted as a chapter
-    assert.ok(!parsed.chapters.some((ch) => /目录|目錄|Table of Contents/i.test(ch.title)));
-    // Ensure sources are extracted on chapter 1
-    assert.ok(parsed.chapters[0].sourceUrls.length > 0, 'Expected parsed source URLs on chapter 1');
-  }
+  const fixture = new URL('../fixtures/saved-webbook-sample.txt', import.meta.url);
+  const rawText = fs.readFileSync(fixture, 'utf-8'); // throws if the fixture is missing
+  const parsed = parseTxtContentToWebBook('2026-11-12T05-48-23_sample.txt', rawText, 1773000000000);
+  assert.ok(parsed !== null);
+  assert.equal(parsed.chapters.length, 6, `Expected exactly 6 chapters, got ${parsed.chapters.length}`);
+  assert.ok(!parsed.chapters.some((ch) => /目录|目錄|Table of Contents/i.test(ch.title)), 'TOC is not a chapter');
+  assert.ok(parsed.chapters.every((ch) => ch.sourceUrls.length > 0), 'every chapter keeps its source link');
+  assert.ok(parsed.chapters.every((ch) => !ch.content.includes('https://')), 'sources are not left in the body');
 }
 
 console.log('localHistoryStorage tests passed');
