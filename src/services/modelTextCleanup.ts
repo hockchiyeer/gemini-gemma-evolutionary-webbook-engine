@@ -42,7 +42,10 @@ export function cleanChapterContent(content: string, chapterTitle = ''): string 
   const kept: string[] = [];
   for (const raw of lines) {
     const trimmed = raw.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      kept.push('');
+      continue;
+    }
     // Strip standalone divider lines (e.g. ==================== or --------------------)
     if (/^\s*[=_\-]{3,}\s*$/.test(trimmed)) continue;
 

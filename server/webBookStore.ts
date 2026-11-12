@@ -125,6 +125,40 @@ function sendJson(res: ServerResponse, statusCode: number, payload: unknown): vo
 }
 
 /**
+ * True when a saved file belongs to this topic. Both sides are compared whole after dropping case, spaces,
+ * underscores and hyphens ("Book_2" equals "Book 2"): the file's first line (the exporter writes the topic
+ * there, upper-cased) or its name without the timestamp prefix. Never a substring match, so deleting
+ * "Quantum" cannot take "Quantum Computing" with it.
+ */
+export function fileHoldsTopic(dir: string, fileName: string, topic: string): boolean {
+  const norm = (value: string) => value.toLowerCase().replace(/[\s_-]+/g, "");
+  const wanted = norm(topic);
+  if (!wanted) return false;
+  const stem = fileName.replace(/\.txt$/i, "").replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_/, "");
+  if (norm(stem) === wanted) return true;
+  try {
+    const firstLine = fs.readFileSync(path.join(dir, fileName), "utf8").split("\n", 1)[0] ?? "";
+    return norm(firstLine) === wanted;
+  } catch {
+    return false;
+  }
+}
+
+/** Destructive routes refuse requests that a browser says come from another site (cross-site POST/DELETE to localhost). */
+function isCrossSite(req: IncomingMessage): boolean {
+  const origin = req.headers["origin"];
+  if (!origin || typeof origin !== "string") return false;
+  try {
+    const originHost = new URL(origin).host;
+    const forwarded = req.headers["x-forwarded-host"];
+    const hosts = [req.headers["host"], ...(typeof forwarded === "string" ? forwarded.split(",").map((h) => h.trim()) : [])];
+    return !hosts.includes(originHost);
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Middleware handling /api/webbooks/persist and /api/webbooks/list.
  */
 export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR, options: { maxBodyBytes?: number } = {}) {
@@ -199,17 +233,28 @@ export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR, 
       }
     }
 
+    const isDestructive =
+      (url.pathname === "/api/webbooks/file" && req.method === "DELETE") ||
+      (url.pathname === "/api/webbooks/delete" && req.method === "POST") ||
+      (url.pathname === "/api/webbooks/all" && (req.method === "DELETE" || req.method === "POST")) ||
+      (url.pathname === "/api/webbooks/files" && req.method === "DELETE") ||
+      (url.pathname === "/api/webbooks/clear" && req.method === "POST");
+    if (isDestructive && isCrossSite(req)) {
+      sendJson(res, 403, { ok: false, error: "Cross-site requests cannot delete saved webbooks" });
+      return;
+    }
+
     if ((url.pathname === "/api/webbooks/file" && req.method === "DELETE") || (url.pathname === "/api/webbooks/delete" && req.method === "POST")) {
       try {
         const fileName = url.searchParams.get("name") || "";
         const topic = url.searchParams.get("topic") || "";
-        if (!fileName && !topic) {
+        if (!fileName.trim() && !topic.trim()) {
           sendJson(res, 400, { ok: false, error: "Missing name or topic parameter" });
           return;
         }
 
         let deletedCount = 0;
-        if (fileName) {
+        if (fileName.trim()) {
           if (fileName.includes("/") || fileName.includes("\\") || fileName.includes("..") || !fileName.toLowerCase().endsWith(".txt")) {
             sendJson(res, 400, { ok: false, error: "Invalid file name: only .txt files in saved_webbooks/ can be deleted" });
             return;
@@ -221,21 +266,11 @@ export function createWebBookStoreMiddleware(dir: string = PERSISTED_BOOKS_DIR, 
           }
         }
 
-        if (topic) {
-          const cleanTopic = topic.trim().toLowerCase();
-          const cleanTopicNorm = cleanTopic.replace(/[\s_-]+/g, "");
-          const entries = listPersistedWebBooks(dir);
-          for (const entry of entries) {
+        if (topic.trim()) {
+          for (const entry of listPersistedWebBooks(dir)) {
+            if (!fileHoldsTopic(dir, entry.fileName, topic)) continue;
             const filePath = path.join(dir, entry.fileName);
-            const entryNorm = entry.fileName.toLowerCase().replace(/[\s_-]+/g, "");
-            let matches = entryNorm.includes(cleanTopicNorm);
-            if (!matches && fs.existsSync(filePath)) {
-              try {
-                const header = fs.readFileSync(filePath, "utf8").slice(0, 200).split("\n")[0]?.trim().toLowerCase();
-                if (header === cleanTopic || header.replace(/[\s_-]+/g, "") === cleanTopicNorm) matches = true;
-              } catch {}
-            }
-            if (matches && fs.existsSync(filePath)) {
+            if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
               deletedCount++;
             }

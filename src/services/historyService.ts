@@ -412,9 +412,6 @@ export async function deleteServerPersistedWebBook(params: { fileName?: string; 
     const query = new URLSearchParams();
     if (params.fileName) {
       query.set('name', params.fileName);
-    } else if (params.id && params.id.startsWith('server-')) {
-      const derived = params.id.replace(/^server-/, '');
-      query.set('name', `${derived}.txt`);
     }
     if (params.topic) {
       query.set('topic', params.topic);
