@@ -698,17 +698,28 @@ export function buildPrintFriendlyReportPagesHtml(webBook: WebBook, measuredHeig
 const DUMMY_JPEG_DATA_URL =
   'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
 
-export async function renderPrintFriendlyReportCanvases(webBook: WebBook): Promise<HTMLCanvasElement[]> {
+/**
+ * Renders the report as A4 page canvases (3x). Every page is ~32 MB of pixels, so a long book held as one array can exhaust
+ * the memory of a hosted preview iframe. With `onPage` each canvas is handed over as soon as it is drawn and released right
+ * after, so only one page is alive at a time (the returned array is then empty and `onPage` receives the page count).
+ */
+export async function renderPrintFriendlyReportCanvases(
+  webBook: WebBook,
+  onPage?: (canvas: HTMLCanvasElement, index: number, total: number) => Promise<void> | void
+): Promise<HTMLCanvasElement[]> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return [
-      {
-        width: PAGE_WIDTH_PX * IMAGE_RENDER_SCALE,
-        height: PAGE_HEIGHT_PX * IMAGE_RENDER_SCALE,
-        toBlob: (cb: (b: Blob) => void, type?: string) =>
-          cb(new Blob(['mock-print-friendly-image'], { type: type || 'image/jpeg' })),
-        toDataURL: () => DUMMY_JPEG_DATA_URL,
-      } as unknown as HTMLCanvasElement,
-    ];
+    const mock = {
+      width: PAGE_WIDTH_PX * IMAGE_RENDER_SCALE,
+      height: PAGE_HEIGHT_PX * IMAGE_RENDER_SCALE,
+      toBlob: (cb: (b: Blob) => void, type?: string) =>
+        cb(new Blob(['mock-print-friendly-image'], { type: type || 'image/jpeg' })),
+      toDataURL: () => DUMMY_JPEG_DATA_URL,
+    } as unknown as HTMLCanvasElement;
+    if (onPage) {
+      await onPage(mock, 0, 1);
+      return [];
+    }
+    return [mock];
   }
 
   const html2canvasModule = await loadExportLibrary('html2canvas', () => import('html2canvas'));
@@ -759,7 +770,16 @@ export async function renderPrintFriendlyReportCanvases(webBook: WebBook): Promi
         windowWidth: PAGE_WIDTH_PX,
         windowHeight: PAGE_HEIGHT_PX,
       });
-      canvases.push(canvas);
+      if (onPage) {
+        try {
+          await onPage(canvas, index, pagesHtml.length);
+        } finally {
+          canvas.width = 0; // frees the pixel buffer before the next page is drawn
+          canvas.height = 0;
+        }
+      } else {
+        canvases.push(canvas);
+      }
     }
   } finally {
     if (container.parentNode) {
@@ -794,23 +814,26 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
  */
 export async function exportPrintFriendlyWebBookToImage(webBook: WebBook): Promise<void> {
   const safeWebBook = sanitizeWebBookForPresentation(webBook);
-  const canvases = await renderPrintFriendlyReportCanvases(safeWebBook);
-  if (canvases.length === 0) {
-    throw new Error('No canvases available to export.');
-  }
-
   const baseName = `${safeWebBook.topic}_PrintFriendly_Report`;
   const pad = (n: number) => String(n).padStart(2, '0');
-  for (let index = 0; index < canvases.length; index += 1) {
-    const blob = await canvasToJpgBlob(canvases[index]);
+  let saved = 0;
+
+  // One page at a time: render, save, release (see renderPrintFriendlyReportCanvases).
+  await renderPrintFriendlyReportCanvases(safeWebBook, async (canvas, index, total) => {
+    const blob = await canvasToJpgBlob(canvas);
     const name =
-      canvases.length === 1
+      total === 1
         ? getExportFileName(baseName, 'jpg')
-        : getExportFileName(`${baseName}_page_${pad(index + 1)}_of_${pad(canvases.length)}`, 'jpg');
+        : getExportFileName(`${baseName}_page_${pad(index + 1)}_of_${pad(total)}`, 'jpg');
     downloadBlob(blob, name);
-    if (index < canvases.length - 1) {
+    saved += 1;
+    if (index < total - 1) {
       await wait(250); // browsers drop back-to-back programmatic downloads
     }
+  });
+
+  if (saved === 0) {
+    throw new Error('No canvases available to export.');
   }
 }
 

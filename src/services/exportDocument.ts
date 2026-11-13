@@ -55,7 +55,13 @@ export function getExportFileName(topic: string, extension: string): string {
   return `${topic.replace(/\s+/g, '_')}.${extension}`;
 }
 
-export function downloadBlob(blob: Blob, fileName: string): void {
+/**
+ * The object URL must outlive the click: revoking it straight away can cancel a large download (a multi-MB PDF or JPG)
+ * before the browser has read it, which shows up in hosted previews and iframes as "the export did nothing".
+ */
+export const DOWNLOAD_URL_REVOKE_DELAY_MS = 60_000;
+
+export function downloadBlob(blob: Blob, fileName: string, revokeDelayMs: number = DOWNLOAD_URL_REVOKE_DELAY_MS): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.style.display = 'none';
@@ -64,7 +70,7 @@ export function downloadBlob(blob: Blob, fileName: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), revokeDelayMs);
 }
 
 function parseDataUrlImage(src: string): DocxChapterImageAsset | null {
