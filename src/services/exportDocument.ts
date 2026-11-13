@@ -162,6 +162,50 @@ function createFallbackImagePlaceholder(text: string, width = 800, height = 450)
   return canvas.toDataURL('image/png');
 }
 
+/**
+ * picsum.photos pictures are fetched through the app's own server (/api/image-proxy) for export: reading their pixels from the
+ * browser needs CORS, which hosted previews such as Google AI Studio block, and that used to turn every picture into a placeholder.
+ * Returns null for any other picture, which is then read directly as before.
+ */
+export function getImageProxyUrl(src: string): string | null {
+  try {
+    const url = new URL(src);
+    if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'picsum.photos') return null;
+    return `/api/image-proxy?u=${encodeURIComponent(url.toString())}`;
+  } catch {
+    return null;
+  }
+}
+
+interface InlinedImage {
+  exportSrc: string;
+  width: number;
+  height: number;
+}
+
+/** Loads one picture and returns it as a data URL. Throws when it cannot be read (blocked, offline, tainted canvas, ...). */
+async function readImageAsDataUrl(src: string): Promise<InlinedImage> {
+  try {
+    const loaded = await loadImageMetadata(src);
+    if (src.startsWith('data:image/')) {
+      return { exportSrc: src, width: loaded.width, height: loaded.height };
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = loaded.width;
+    canvas.height = loaded.height;
+    canvas.getContext('2d')?.drawImage(loaded.image, 0, 0);
+    return { exportSrc: canvas.toDataURL('image/png'), width: loaded.width, height: loaded.height };
+  } catch (inlineError) {
+    const response = await fetch(src, { mode: 'cors' });
+    if (!response.ok) {
+      throw inlineError;
+    }
+    const exportSrc = await blobToDataUrl(await response.blob());
+    const loaded = await loadImageMetadata(exportSrc);
+    return { exportSrc, width: loaded.width, height: loaded.height };
+  }
+}
+
 async function inlineImageForExport(image: HTMLImageElement): Promise<void> {
   if (!image.src) {
     return;
@@ -173,32 +217,26 @@ async function inlineImageForExport(image: HTMLImageElement): Promise<void> {
     height: image.naturalHeight || image.height || 1,
   };
 
-  try {
-    const loaded = await loadImageMetadata(image.src);
-    metadata = { width: loaded.width, height: loaded.height };
-
-    if (!image.src.startsWith('data:image/')) {
-      const canvas = document.createElement('canvas');
-      canvas.width = loaded.width;
-      canvas.height = loaded.height;
-      canvas.getContext('2d')?.drawImage(loaded.image, 0, 0);
-      exportSrc = canvas.toDataURL('image/png');
-    }
-  } catch (inlineError) {
+  // Same-origin proxy first (when it applies), then the picture's own address.
+  const proxyUrl = getImageProxyUrl(image.src);
+  const candidates = proxyUrl ? [proxyUrl, image.src] : [image.src];
+  let lastError: unknown = null;
+  let inlined: InlinedImage | null = null;
+  for (const candidate of candidates) {
     try {
-      const response = await fetch(image.src, { mode: 'cors' });
-      if (!response.ok) {
-        throw inlineError;
-      }
-
-      const blob = await response.blob();
-      exportSrc = await blobToDataUrl(blob);
-      const loaded = await loadImageMetadata(exportSrc);
-      metadata = { width: loaded.width, height: loaded.height };
-    } catch (fallbackError) {
-      console.warn('Failed to inline image for export, using safe placeholder', fallbackError);
-      exportSrc = createFallbackImagePlaceholder(image.alt || 'Chapter Visual');
+      inlined = await readImageAsDataUrl(candidate);
+      break;
+    } catch (candidateError) {
+      lastError = candidateError;
     }
+  }
+
+  if (inlined) {
+    exportSrc = inlined.exportSrc;
+    metadata = { width: inlined.width, height: inlined.height };
+  } else {
+    console.warn('Failed to inline image for export, using safe placeholder', lastError);
+    exportSrc = createFallbackImagePlaceholder(image.alt || 'Chapter Visual');
   }
 
   image.src = exportSrc;
