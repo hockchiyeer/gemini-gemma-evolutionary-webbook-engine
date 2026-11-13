@@ -3,8 +3,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(import.meta.dirname, '..', '..');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '..', '..');
 const script: string = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts['test:server'];
 const registered = script.split('&&').map((part) => part.trim().replace(/^tsx\s+/, '')).filter((part) => part.endsWith('.test.ts'));
 const onDisk = fs.readdirSync(path.join(root, 'tests', 'server')).filter((f) => f.endsWith('.test.ts')).map((f) => `tests/server/${f}`);
